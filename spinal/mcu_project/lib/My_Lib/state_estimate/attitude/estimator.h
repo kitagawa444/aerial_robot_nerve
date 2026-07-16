@@ -41,7 +41,7 @@ class EstimatorAlgorithm {
                                                        // is opposite with euler frame
   };
 
-  ~EstimatorAlgorithm() {}
+  virtual ~EstimatorAlgorithm() {}
 
   void update(const ap::Vector3f& gyro, const ap::Vector3f& acc, const ap::Vector3f& mag) {
     /* the sensor data in body frame */
