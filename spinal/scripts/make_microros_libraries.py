@@ -1,5 +1,6 @@
 #!/usr/bin/env python3
 import argparse
+import os
 import shutil
 import subprocess
 import re
@@ -15,6 +16,25 @@ DEFAULT_MICROROS_EXTRA_DIR = (
 )
 
 DEFAULT_STAGE_SUBDIR = "microros"
+
+# The NERVE STM32H743 CubeIDE project is built for the Cortex-M7 double-precision
+# FPU using the hard-float calling convention.  libmicroros.a must use the same
+# ABI; otherwise the linker reports that the application uses VFP register
+# arguments while the archive does not.
+DEFAULT_TARGET_CFLAGS = " ".join(
+    [
+        "-mcpu=cortex-m7",
+        "-mthumb",
+        "-mfpu=fpv5-d16",
+        "-mfloat-abi=hard",
+        "-ffunction-sections",
+        "-fdata-sections",
+        "-DSTM32CUBEIDE",
+        "-DSTM32H743xx",
+        "-DUSE_HAL_DRIVER",
+        "--specs=nano.specs",
+    ]
+)
 
 
 def run(cmd: list[str], cwd: Optional[Path] = None) -> None:
@@ -196,6 +216,15 @@ def main() -> None:
         help="Docker image to use.",
     )
     ap.add_argument(
+        "--target-cflags",
+        type=str,
+        default=DEFAULT_TARGET_CFLAGS,
+        help=(
+            "Explicit flags for libmicroros.a. Defaults to the STM32H743 "
+            "Cortex-M7 fpv5-d16 hard-float ABI; an override must retain that ABI."
+        ),
+    )
+    ap.add_argument(
         "--microros-folder",
         type=str,
         default=DEFAULT_MICROROS_FOLDER,
@@ -238,6 +267,21 @@ def main() -> None:
 
     args = ap.parse_args()
 
+    required_target_flags = (
+        "-mcpu=cortex-m7",
+        "-mthumb",
+        "-mfpu=fpv5-d16",
+        "-mfloat-abi=hard",
+    )
+    missing_target_flags = [
+        flag for flag in required_target_flags if flag not in args.target_cflags.split()
+    ]
+    if missing_target_flags:
+        raise SystemExit(
+            "[error] --target-cflags must retain the STM32H743 hard-float ABI flags: "
+            + ", ".join(missing_target_flags)
+        )
+
     ws_src: Path = args.ws_src.expanduser().resolve()
     if not ws_src.is_dir():
         raise SystemExit(f"[error] ws-src not found: {ws_src}")
@@ -272,7 +316,12 @@ def main() -> None:
 
     update_extra_repos(repos_yaml, pkg_name)
 
-    docker_cmd_prefix = ["sudo", "docker"]
+    if shutil.which("docker") is None:
+        raise SystemExit("[error] docker is required but was not found on PATH")
+
+    # Do not depend on sudo: Docker access is normally granted through the
+    # docker group, and invoking sudo here leaves generated files root-owned.
+    docker_cmd_prefix = ["docker"]
 
     if microros_build_output.exists():
         remove_if_exists(microros_build_output)
@@ -289,6 +338,12 @@ def main() -> None:
             f"{ws_src}:/project",
             "-e",
             f"MICROROS_LIBRARY_FOLDER={args.microros_folder}",
+            "-e",
+            f"MICROROS_RET_CFLAGS={args.target_cflags}",
+            "-e",
+            f"MICROROS_HOST_UID={os.getuid()}",
+            "-e",
+            f"MICROROS_HOST_GID={os.getgid()}",
             args.docker_image,
         ]
     )
