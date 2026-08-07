@@ -2,12 +2,17 @@
 
 set -euo pipefail
 
-readonly PACKAGES=(
+PACKAGES=(
   gcc-arm-none-eabi
   binutils-arm-none-eabi
   libnewlib-arm-none-eabi
   libstdc++-arm-none-eabi-newlib
 )
+
+host_arch=$(uname -m)
+if [[ "${host_arch}" == "aarch64" || "${host_arch}" == "arm64" ]]; then
+  PACKAGES+=(stm32flash)
+fi
 
 usage() {
   cat <<'EOF'
@@ -57,6 +62,12 @@ for command_name in \
     missing+=("${command_name}")
   fi
 done
+
+if [[ "${host_arch}" == "aarch64" || "${host_arch}" == "arm64" ]]; then
+  if ! command -v stm32flash >/dev/null 2>&1; then
+    missing+=(stm32flash)
+  fi
+fi
 
 if command -v arm-none-eabi-g++ >/dev/null 2>&1; then
   for library_name in libstdc++.a libsupc++.a; do

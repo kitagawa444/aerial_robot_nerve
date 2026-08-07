@@ -43,7 +43,7 @@ add_custom_target(check_stm32_programmer
     --check-only
   USES_TERMINAL
   VERBATIM
-  COMMENT "Checking STM32CubeProgrammer")
+  COMMENT "Checking the STM32 programming tool")
 
 add_custom_target(setup_stm32_programmer
   COMMAND "${CMAKE_COMMAND}" -E env
@@ -53,12 +53,11 @@ add_custom_target(setup_stm32_programmer
     "${CMAKE_CURRENT_SOURCE_DIR}/scripts/bootstrap_stm32_programmer.sh"
   USES_TERMINAL
   VERBATIM
-  COMMENT "Installing the official STM32CubeProgrammer for this host")
+  COMMENT "Installing the STM32 programming tool for this host")
 
 add_custom_target(setup_stm32_environment)
-add_dependencies(setup_stm32_environment
-  setup_stm32_tools
-  setup_stm32_programmer)
+add_dependencies(setup_stm32_programmer setup_stm32_tools)
+add_dependencies(setup_stm32_environment setup_stm32_programmer)
 
 file(GLOB_RECURSE FIRMWARE_INPUTS CONFIGURE_DEPENDS
   "${CMAKE_CURRENT_SOURCE_DIR}/../spinal/mcu_project/lib/My_Lib/*.cpp"
@@ -96,12 +95,12 @@ set(STM32_FLASH_PORT "/dev/ttyUSB0" CACHE STRING
 set(STM32_FLASH_BAUD "115200" CACHE STRING
   "UART baud rate used by the STM32 ROM bootloader")
 set(STM32_FLASH_BACKEND "auto" CACHE STRING
-  "STM32 programmer backend: auto or cubeprogrammer")
+  "STM32 programmer backend: auto, cubeprogrammer, or stm32flash")
 set_property(CACHE STM32_FLASH_BACKEND PROPERTY STRINGS
-  auto cubeprogrammer)
-if(NOT STM32_FLASH_BACKEND MATCHES "^(auto|cubeprogrammer)$")
+  auto cubeprogrammer stm32flash)
+if(NOT STM32_FLASH_BACKEND MATCHES "^(auto|cubeprogrammer|stm32flash)$")
   message(FATAL_ERROR
-    "STM32_FLASH_BACKEND must be auto or cubeprogrammer")
+    "STM32_FLASH_BACKEND must be auto, cubeprogrammer, or stm32flash")
 endif()
 
 set(STM32_PROGRAMMER_ARGUMENTS)

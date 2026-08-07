@@ -12,15 +12,16 @@ Usage: bootstrap_stm32_programmer.sh [--check-only]
 
 Install the official STM32CubeProgrammer for the current host architecture.
 On x86_64, the ST `cube` bundle CLI performs the download, license display,
-integrity verification, and installation. On aarch64, the official ARM64
-Debian package is validated and installed with apt.
+integrity verification, and installation. On aarch64, the default unattended
+backend is Ubuntu/Debian's stm32flash package. An explicitly supplied official
+ARM64 Debian package is validated and installed with apt instead.
 
-The ARM64 package can be supplied with STM32_PROGRAMMER_DEB. If it is omitted,
-the script searches the current directory and the user's Downloads directories.
-STM32_PROGRAMMER_DEB_URL can instead contain an ST-issued download URL.
+The optional ARM64 package can be supplied with STM32_PROGRAMMER_DEB.
+STM32_PROGRAMMER_DEB_URL can instead contain an ST-issued download URL. If
+both are omitted, stm32flash is used.
 
 Options:
-  --check-only  Verify STM32CubeProgrammer without changing the machine.
+  --check-only  Verify the programmer without changing the machine.
   -h, --help    Show this help.
 EOF
 }
@@ -87,13 +88,34 @@ check_programmer() {
     && "${version_output}" == *"${PROGRAMMER_VERSION}"* ]]
 }
 
+check_stm32flash() {
+  local version_output
+  command -v stm32flash >/dev/null 2>&1 || return 1
+  version_output=$(stm32flash /dev/null 2>&1 || true)
+  [[ "${version_output}" =~ stm32flash[[:space:]]+[0-9]+\.[0-9]+ ]]
+}
+
+host_arch="${STM32_HOST_ARCH:-$(uname -m)}"
+official_arm_requested=false
+if [[ -n "${STM32_PROGRAMMER_DEB:-}" \
+    || -n "${STM32_PROGRAMMER_DEB_URL:-}" ]]; then
+  official_arm_requested=true
+fi
+
 if check_programmer; then
   echo "STM32CubeProgrammer ${PROGRAMMER_VERSION} is available: ${programmer}"
   exit 0
 fi
 
+if [[ "${host_arch}" == "aarch64" || "${host_arch}" == "arm64" ]] \
+    && [[ "${official_arm_requested}" == false ]] \
+    && check_stm32flash; then
+  echo "stm32flash is available: $(command -v stm32flash)"
+  exit 0
+fi
+
 if [[ "${check_only}" == true ]]; then
-  echo "STM32CubeProgrammer ${PROGRAMMER_VERSION} is not installed." >&2
+  echo "No supported STM32 programmer is installed for ${host_arch}." >&2
   exit 1
 fi
 
@@ -102,8 +124,15 @@ if [[ -n "${STM32_PROGRAMMER:-}" ]]; then
   exit 1
 fi
 
-host_arch="${STM32_HOST_ARCH:-$(uname -m)}"
 if [[ "${host_arch}" == "aarch64" || "${host_arch}" == "arm64" ]]; then
+  if [[ "${official_arm_requested}" == false ]]; then
+    cat >&2 <<'EOF'
+stm32flash is missing. Run setup_stm32_environment so the apt-based build and
+UART programming tools are installed before this target.
+EOF
+    exit 1
+  fi
+
   package="${STM32_PROGRAMMER_DEB:-}"
   temporary_package=""
 
@@ -120,28 +149,14 @@ if [[ "${host_arch}" == "aarch64" || "${host_arch}" == "arm64" ]]; then
     package="${temporary_package}"
   fi
 
-  if [[ -z "${package}" ]]; then
-    shopt -s nullglob
-    packages=(
-      "${PWD}"/stm32cubeprogrammer_*_arm64.deb
-      "${HOME}"/Downloads/stm32cubeprogrammer_*_arm64.deb
-      "${HOME}"/downloads/stm32cubeprogrammer_*_arm64.deb
-      "${HOME}"/ダウンロード/stm32cubeprogrammer_*_arm64.deb
-    )
-    shopt -u nullglob
-    if ((${#packages[@]})); then
-      package="${packages[${#packages[@]} - 1]}"
-    fi
-  fi
-
   if [[ -z "${package}" || ! -f "${package}" ]]; then
     cat >&2 <<EOF
 STM32CubeProgrammer ${PROGRAMMER_VERSION} for Linux ARM64 is distributed by ST
 as a Debian package behind its license/export-control download confirmation.
 Download stm32cubeprogrammer_*_arm64.deb once from:
   ${DOWNLOAD_PAGE}
-Then rerun this target. The package is found automatically in ~/Downloads, or
-set STM32_PROGRAMMER_DEB=/absolute/path/to/package.deb.
+Then set STM32_PROGRAMMER_DEB=/absolute/path/to/package.deb and rerun this
+target. Omit that setting to use the fully unattended stm32flash backend.
 EOF
     exit 1
   fi
