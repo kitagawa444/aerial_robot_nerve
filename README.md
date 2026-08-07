@@ -49,8 +49,9 @@ to the setup command. The target then validates the mounted copy instead of
 trying to install another copy inside the container.
 
 The setup target is idempotent. It installs any missing compiler and C/C++
-runtime apt packages and installs the official STM32CubeProgrammer 2.23 bundle
-through ST's `cube` bundle CLI. Apt may ask for the local sudo password. The
+runtime apt packages. On x86_64 it installs the official STM32CubeProgrammer
+2.23 bundle through ST's `cube` bundle CLI. On aarch64 it validates and installs
+ST's ARM64 Debian package with apt. Apt may ask for the local sudo password. The
 separate setup remains necessary because the standard rosdep database has no
 key for Ubuntu's `libstdc++-arm-none-eabi-newlib` package. It is deliberately
 not part of the default build, so an ordinary `colcon build` never runs sudo,
@@ -85,6 +86,25 @@ inside the official STM32 VS Code extension pack, and runs:
 
 ```bash
 cube bundle install --yes programmer@2.23.0
+```
+
+ST distributes the Linux ARM64 package behind a license/export-control download
+confirmation, so a clean aarch64 host needs the official
+`stm32cubeprogrammer_*_arm64.deb` downloaded once from the
+[STM32CubeProgrammer page](https://www.st.com/en/development-tools/stm32cubeprog.html#st-get-software).
+Leave it in `~/Downloads` and rerun `setup_stm32_environment`; discovery,
+validation, dependency installation, and package installation are automatic.
+An explicit local package or ST-issued download URL can be passed instead:
+
+```bash
+colcon build --packages-select spinal_firmware \
+  --cmake-args -DSTM32_PROGRAMMER_DEB=/path/to/stm32cubeprogrammer_2.23.0_arm64.deb \
+  --cmake-target setup_stm32_environment
+
+# Or, for a short-lived URL issued by ST after confirmation:
+colcon build --packages-select spinal_firmware \
+  --cmake-args -DSTM32_PROGRAMMER_DEB_URL='https://...' \
+  --cmake-target setup_stm32_environment
 ```
 
 The bundle is installed below

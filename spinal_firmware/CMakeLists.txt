@@ -9,6 +9,10 @@ endif()
 
 set(STM32_PROGRAMMER "" CACHE FILEPATH
   "Optional path to STM32_Programmer_CLI (2.23 or newer)")
+set(STM32_PROGRAMMER_DEB "" CACHE FILEPATH
+  "Optional path to ST's STM32CubeProgrammer 2.23 ARM64 Debian package")
+set(STM32_PROGRAMMER_DEB_URL "" CACHE STRING
+  "Optional ST-issued URL for the STM32CubeProgrammer 2.23 ARM64 Debian package")
 
 set(FIRMWARE_SOURCE_DIR "${CMAKE_CURRENT_SOURCE_DIR}/firmware")
 set(FIRMWARE_BUILD_DIR "${CMAKE_CURRENT_BINARY_DIR}/firmware_build")
@@ -33,6 +37,8 @@ add_custom_target(setup_stm32_tools
 add_custom_target(check_stm32_programmer
   COMMAND "${CMAKE_COMMAND}" -E env
     "STM32_PROGRAMMER=${STM32_PROGRAMMER}"
+    "STM32_PROGRAMMER_DEB=${STM32_PROGRAMMER_DEB}"
+    "STM32_PROGRAMMER_DEB_URL=${STM32_PROGRAMMER_DEB_URL}"
     "${CMAKE_CURRENT_SOURCE_DIR}/scripts/bootstrap_stm32_programmer.sh"
     --check-only
   USES_TERMINAL
@@ -42,10 +48,12 @@ add_custom_target(check_stm32_programmer
 add_custom_target(setup_stm32_programmer
   COMMAND "${CMAKE_COMMAND}" -E env
     "STM32_PROGRAMMER=${STM32_PROGRAMMER}"
+    "STM32_PROGRAMMER_DEB=${STM32_PROGRAMMER_DEB}"
+    "STM32_PROGRAMMER_DEB_URL=${STM32_PROGRAMMER_DEB_URL}"
     "${CMAKE_CURRENT_SOURCE_DIR}/scripts/bootstrap_stm32_programmer.sh"
   USES_TERMINAL
   VERBATIM
-  COMMENT "Installing the official STM32CubeProgrammer bundle")
+  COMMENT "Installing the official STM32CubeProgrammer for this host")
 
 add_custom_target(setup_stm32_environment)
 add_dependencies(setup_stm32_environment
