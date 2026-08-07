@@ -5,6 +5,8 @@ set -euo pipefail
 readonly PROGRAMMER_VERSION="2.23.0"
 readonly BUNDLE_ID="programmer@${PROGRAMMER_VERSION}"
 readonly DOWNLOAD_PAGE="https://www.st.com/en/development-tools/stm32cubeprog.html#st-get-software"
+readonly DEFAULT_ARM64_PACKAGE_URL="https://drive.usercontent.google.com/download?id=1gX2pNBjZ8pFm_DzgV1kgPRpxuWnluyDC&export=download&confirm=t"
+readonly DEFAULT_ARM64_PACKAGE_SHA256="46b844fd135627290d2d0af3d3897debfa4247ec6af7d1cea3e0e9b0fb0bd31d"
 
 usage() {
   cat <<'EOF'
@@ -12,13 +14,13 @@ Usage: bootstrap_stm32_programmer.sh [--check-only]
 
 Install the official STM32CubeProgrammer for the current host architecture.
 On x86_64, the ST `cube` bundle CLI performs the download, license display,
-integrity verification, and installation. On aarch64, the default unattended
-backend is Ubuntu/Debian's stm32flash package. An explicitly supplied official
-ARM64 Debian package is validated and installed with apt instead.
+integrity verification, and installation. On aarch64, the validated official
+ARM64 Debian package is downloaded from the project Google Drive and installed
+with apt.
 
-The optional ARM64 package can be supplied with STM32_PROGRAMMER_DEB.
-STM32_PROGRAMMER_DEB_URL can instead contain an ST-issued download URL. If
-both are omitted, stm32flash is used.
+STM32_PROGRAMMER_DEB can override the package with a local file.
+STM32_PROGRAMMER_DEB_URL and STM32_PROGRAMMER_DEB_SHA256 can override the
+download URL and required checksum together.
 
 Options:
   --check-only  Verify the programmer without changing the machine.
@@ -88,29 +90,10 @@ check_programmer() {
     && "${version_output}" == *"${PROGRAMMER_VERSION}"* ]]
 }
 
-check_stm32flash() {
-  local version_output
-  command -v stm32flash >/dev/null 2>&1 || return 1
-  version_output=$(stm32flash /dev/null 2>&1 || true)
-  [[ "${version_output}" =~ stm32flash[[:space:]]+[0-9]+\.[0-9]+ ]]
-}
-
 host_arch="${STM32_HOST_ARCH:-$(uname -m)}"
-official_arm_requested=false
-if [[ -n "${STM32_PROGRAMMER_DEB:-}" \
-    || -n "${STM32_PROGRAMMER_DEB_URL:-}" ]]; then
-  official_arm_requested=true
-fi
 
 if check_programmer; then
   echo "STM32CubeProgrammer ${PROGRAMMER_VERSION} is available: ${programmer}"
-  exit 0
-fi
-
-if [[ "${host_arch}" == "aarch64" || "${host_arch}" == "arm64" ]] \
-    && [[ "${official_arm_requested}" == false ]] \
-    && check_stm32flash; then
-  echo "stm32flash is available: $(command -v stm32flash)"
   exit 0
 fi
 
@@ -125,28 +108,39 @@ if [[ -n "${STM32_PROGRAMMER:-}" ]]; then
 fi
 
 if [[ "${host_arch}" == "aarch64" || "${host_arch}" == "arm64" ]]; then
-  if [[ "${official_arm_requested}" == false ]]; then
-    cat >&2 <<'EOF'
-stm32flash is missing. Run setup_stm32_environment so the apt-based build and
-UART programming tools are installed before this target.
-EOF
-    exit 1
-  fi
-
   package="${STM32_PROGRAMMER_DEB:-}"
   temporary_package=""
+  package_url="${STM32_PROGRAMMER_DEB_URL:-${DEFAULT_ARM64_PACKAGE_URL}}"
+  package_sha256="${STM32_PROGRAMMER_DEB_SHA256:-}"
 
-  if [[ -z "${package}" && -n "${STM32_PROGRAMMER_DEB_URL:-}" ]]; then
+  if [[ -z "${package}" ]]; then
     command -v curl >/dev/null 2>&1 || {
       echo "curl is required to download STM32CubeProgrammer." >&2
       exit 1
     }
+    if [[ -z "${package_sha256}" ]]; then
+      if [[ "${package_url}" == "${DEFAULT_ARM64_PACKAGE_URL}" ]]; then
+        package_sha256="${DEFAULT_ARM64_PACKAGE_SHA256}"
+      else
+        echo "STM32_PROGRAMMER_DEB_SHA256 is required with a custom download URL." >&2
+        exit 1
+      fi
+    fi
     temporary_package=$(mktemp --suffix=_arm64.deb)
     trap 'rm -f "${temporary_package}"' EXIT
-    echo "Downloading official STM32CubeProgrammer ARM64 package"
-    curl --fail --location --show-error \
-      --output "${temporary_package}" "${STM32_PROGRAMMER_DEB_URL}"
+    echo "Downloading official STM32CubeProgrammer ARM64 package from Google Drive"
+    curl --fail --location --silent --show-error \
+      --retry 3 --retry-delay 2 \
+      --output "${temporary_package}" "${package_url}"
     package="${temporary_package}"
+    actual_sha256=$(sha256sum "${package}" | awk '{print $1}')
+    if [[ "${actual_sha256}" != "${package_sha256}" ]]; then
+      echo "STM32CubeProgrammer package checksum mismatch." >&2
+      echo "Expected: ${package_sha256}" >&2
+      echo "Actual:   ${actual_sha256}" >&2
+      exit 1
+    fi
+    chmod a+r "${package}"
   fi
 
   if [[ -z "${package}" || ! -f "${package}" ]]; then
@@ -156,14 +150,19 @@ as a Debian package behind its license/export-control download confirmation.
 Download stm32cubeprogrammer_*_arm64.deb once from:
   ${DOWNLOAD_PAGE}
 Then set STM32_PROGRAMMER_DEB=/absolute/path/to/package.deb and rerun this
-target. Omit that setting to use the fully unattended stm32flash backend.
+target.
 EOF
     exit 1
   fi
 
   package=$(realpath "${package}")
+  package_name=$(dpkg-deb --field "${package}" Package 2>/dev/null || true)
   package_arch=$(dpkg-deb --field "${package}" Architecture 2>/dev/null || true)
   package_version=$(dpkg-deb --field "${package}" Version 2>/dev/null || true)
+  if [[ "${package_name}" != "stm32cubeprogrammer" ]]; then
+    echo "Unexpected Debian package: ${package} (Package=${package_name:-unknown})" >&2
+    exit 1
+  fi
   if [[ "${package_arch}" != "arm64" ]]; then
     echo "Not an ARM64 Debian package: ${package} (Architecture=${package_arch:-unknown})" >&2
     exit 1
@@ -173,8 +172,21 @@ EOF
     exit 1
   fi
 
+  privileged=()
+  if ((EUID != 0)); then
+    if ! command -v sudo >/dev/null 2>&1; then
+      echo "sudo is required to install STM32CubeProgrammer as a non-root user." >&2
+      exit 1
+    fi
+    # Authenticate before stdin is reserved for the package's SLA0048 prompt.
+    sudo -v
+    privileged=(sudo)
+  fi
+
   echo "Installing official STM32CubeProgrammer ${package_version} ARM64 package"
-  sudo apt-get install -y "${package}"
+  echo "Accepting the bundled ST SLA0048 license for this explicit setup target"
+  printf 'A\n' | "${privileged[@]}" env DEBIAN_FRONTEND=noninteractive \
+    apt-get install --yes "${package}"
   programmer=""
   if ! check_programmer; then
     echo "ARM64 package installation completed, but STM32_Programmer_CLI ${PROGRAMMER_VERSION} is unavailable." >&2

@@ -91,9 +91,9 @@ def parse_args() -> argparse.Namespace:
     )
     parser.add_argument(
         "--backend",
-        choices=("auto", "cubeprogrammer", "stm32flash"),
+        choices=("auto", "cubeprogrammer"),
         default="auto",
-        help="Programming backend (default: auto-detect)",
+        help="Programming backend (default: STM32CubeProgrammer)",
     )
     parser.add_argument(
         "--skip-bootloader-request",
@@ -144,11 +144,9 @@ def infer_backend(executable: str) -> str:
     name = Path(executable).name.lower()
     if "stm32_programmer_cli" in name:
         return "cubeprogrammer"
-    if name == "stm32flash":
-        return "stm32flash"
     raise FirmwareUpdateError(
         "cannot infer the programmer backend from the executable name; "
-        "specify --backend cubeprogrammer or stm32flash"
+        "specify --backend cubeprogrammer"
     )
 
 
@@ -180,7 +178,6 @@ def resolve_programmer(backend: str, override: Optional[str]) -> Programmer:
             ),
             "cubeprogrammer",
         ),
-        ("stm32flash", "stm32flash"),
     ]
 
     if backend != "auto":
@@ -196,7 +193,7 @@ def resolve_programmer(backend: str, override: Optional[str]) -> Programmer:
     names = ", ".join(name for name, _ in candidates)
     raise FirmwareUpdateError(
         f"no STM32 programmer found ({names}); install STM32CubeProgrammer "
-        "2.23 or newer, or install stm32flash for UART updates"
+        "2.23 or newer and put STM32_Programmer_CLI on PATH"
     )
 
 
@@ -227,24 +224,6 @@ def cubeprogrammer_version(executable: str) -> Tuple[int, int, int]:
 
 
 def validate_programmer(programmer: Programmer) -> None:
-    if programmer.backend == "stm32flash":
-        try:
-            result = subprocess.run(
-                [programmer.executable, "/dev/null"],
-                check=False,
-                stdout=subprocess.PIPE,
-                stderr=subprocess.STDOUT,
-                text=True,
-                timeout=10.0,
-            )
-        except subprocess.TimeoutExpired as exc:
-            raise FirmwareUpdateError("stm32flash version check timed out") from exc
-        match = re.search(r"stm32flash\s+(\d+)\.(\d+)", result.stdout)
-        if match is None:
-            raise FirmwareUpdateError("could not determine stm32flash version")
-        print(f"[flash] stm32flash version: {match.group(1)}.{match.group(2)}")
-        return
-
     version = cubeprogrammer_version(programmer.executable)
     version_text = ".".join(str(part) for part in version)
     minimum_text = ".".join(str(part) for part in MIN_CUBEPROGRAMMER_VERSION)
@@ -493,32 +472,10 @@ def programmer_commands(
     baud: int,
     firmware: Path,
 ) -> List[List[str]]:
-    if programmer.backend == "stm32flash":
-        if interface != "uart":
-            raise FirmwareUpdateError("stm32flash supports UART updates only")
-        if firmware.suffix.lower() != ".bin":
-            raise FirmwareUpdateError("stm32flash requires a raw .bin firmware file")
-        return [
-            [
-                programmer.executable,
-                "-b",
-                str(baud),
-                "-m",
-                "8e1",
-                "-S",
-                APPLICATION_ADDRESS,
-                "-w",
-                str(firmware),
-                "-v",
-                "-g",
-                APPLICATION_ADDRESS,
-                str(port),
-            ]
-        ]
-
     if interface == "uart":
         command = [
             programmer.executable,
+            "--quietMode",
             "-c",
             f"port={port}",
             f"br={baud}",
@@ -531,6 +488,7 @@ def programmer_commands(
     # the application even if programming is interrupted later.
     restore_boot_address = [
         programmer.executable,
+        "--quietMode",
         "-c",
         "port=SWD",
         "mode=HOTPLUG",
@@ -538,7 +496,13 @@ def programmer_commands(
         CM7_BOOT_ADDRESS_REGISTER,
         APPLICATION_ADDRESS,
     ]
-    program = [programmer.executable, "-c", "port=SWD", "mode=HOTPLUG"]
+    program = [
+        programmer.executable,
+        "--quietMode",
+        "-c",
+        "port=SWD",
+        "mode=HOTPLUG",
+    ]
     append_firmware_write(program, firmware)
     return [restore_boot_address, program]
 
@@ -550,24 +514,13 @@ def wait_for_uart_bootloader(
     timeout: float,
 ) -> None:
     """Wait until GET ID succeeds before allowing an erase/write command."""
-    if programmer.backend == "stm32flash":
-        command = [
-            programmer.executable,
-            "-b",
-            str(baud),
-            "-m",
-            "8e1",
-            str(port),
-        ]
-        ready_pattern = r"Device ID:\s*0x0*[1-9a-f][0-9a-f]*"
-    else:
-        command = [
-            programmer.executable,
-            "-c",
-            f"port={port}",
-            f"br={baud}",
-        ]
-        ready_pattern = r"Chip ID:\s*0x[1-9a-f][0-9a-f]*"
+    command = [
+        programmer.executable,
+        "--quietMode",
+        "-c",
+        f"port={port}",
+        f"br={baud}",
+    ]
     deadline = time.monotonic() + timeout
     attempt = 0
     last_output = ""
@@ -584,7 +537,7 @@ def wait_for_uart_bootloader(
         )
         last_output = result.stdout
         if result.returncode == 0 and re.search(
-            ready_pattern, last_output, re.IGNORECASE
+            r"Chip ID:\s*0x[1-9a-f][0-9a-f]*", last_output, re.IGNORECASE
         ):
             print("[flash] UART ROM bootloader is ready (GET ID succeeded)")
             return
@@ -595,7 +548,7 @@ def wait_for_uart_bootloader(
         time.sleep(min(2.0, remaining))
 
     detail = ""
-    if "GETID command not acknowledged" in last_output or "NACK" in last_output:
+    if "GETID command not acknowledged" in last_output:
         detail = ": GET ID was not acknowledged"
     raise FirmwareUpdateError(
         f"UART ROM bootloader did not become ready within {timeout:.1f}s{detail}"
@@ -637,11 +590,6 @@ def main() -> int:
         # Validate before requesting a reset, since a preflight failure must not
         # leave the flight controller in system memory.
         validate_programmer(programmer)
-        if programmer.backend == "stm32flash" and args.interface != "uart":
-            raise FirmwareUpdateError("stm32flash supports UART updates only")
-        if programmer.backend == "stm32flash" and firmware.suffix.lower() != ".bin":
-            raise FirmwareUpdateError("stm32flash requires a raw .bin firmware file")
-
         if args.agent_start_command and not args.agent_stop_command:
             raise FirmwareUpdateError(
                 "--agent-start-command requires --agent-stop-command"

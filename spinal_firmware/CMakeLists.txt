@@ -11,8 +11,12 @@ set(STM32_PROGRAMMER "" CACHE FILEPATH
   "Optional path to STM32_Programmer_CLI (2.23 or newer)")
 set(STM32_PROGRAMMER_DEB "" CACHE FILEPATH
   "Optional path to ST's STM32CubeProgrammer 2.23 ARM64 Debian package")
-set(STM32_PROGRAMMER_DEB_URL "" CACHE STRING
-  "Optional ST-issued URL for the STM32CubeProgrammer 2.23 ARM64 Debian package")
+set(STM32_PROGRAMMER_DEB_URL
+  "https://drive.usercontent.google.com/download?id=1gX2pNBjZ8pFm_DzgV1kgPRpxuWnluyDC&export=download&confirm=t"
+  CACHE STRING "URL for the STM32CubeProgrammer 2.23 ARM64 Debian package")
+set(STM32_PROGRAMMER_DEB_SHA256
+  "46b844fd135627290d2d0af3d3897debfa4247ec6af7d1cea3e0e9b0fb0bd31d"
+  CACHE STRING "SHA-256 for the STM32CubeProgrammer 2.23 ARM64 Debian package")
 
 set(FIRMWARE_SOURCE_DIR "${CMAKE_CURRENT_SOURCE_DIR}/firmware")
 set(FIRMWARE_BUILD_DIR "${CMAKE_CURRENT_BINARY_DIR}/firmware_build")
@@ -39,6 +43,7 @@ add_custom_target(check_stm32_programmer
     "STM32_PROGRAMMER=${STM32_PROGRAMMER}"
     "STM32_PROGRAMMER_DEB=${STM32_PROGRAMMER_DEB}"
     "STM32_PROGRAMMER_DEB_URL=${STM32_PROGRAMMER_DEB_URL}"
+    "STM32_PROGRAMMER_DEB_SHA256=${STM32_PROGRAMMER_DEB_SHA256}"
     "${CMAKE_CURRENT_SOURCE_DIR}/scripts/bootstrap_stm32_programmer.sh"
     --check-only
   USES_TERMINAL
@@ -50,6 +55,7 @@ add_custom_target(setup_stm32_programmer
     "STM32_PROGRAMMER=${STM32_PROGRAMMER}"
     "STM32_PROGRAMMER_DEB=${STM32_PROGRAMMER_DEB}"
     "STM32_PROGRAMMER_DEB_URL=${STM32_PROGRAMMER_DEB_URL}"
+    "STM32_PROGRAMMER_DEB_SHA256=${STM32_PROGRAMMER_DEB_SHA256}"
     "${CMAKE_CURRENT_SOURCE_DIR}/scripts/bootstrap_stm32_programmer.sh"
   USES_TERMINAL
   VERBATIM
@@ -95,12 +101,12 @@ set(STM32_FLASH_PORT "/dev/ttyUSB0" CACHE STRING
 set(STM32_FLASH_BAUD "115200" CACHE STRING
   "UART baud rate used by the STM32 ROM bootloader")
 set(STM32_FLASH_BACKEND "auto" CACHE STRING
-  "STM32 programmer backend: auto, cubeprogrammer, or stm32flash")
+  "STM32 programmer backend: auto or cubeprogrammer")
 set_property(CACHE STM32_FLASH_BACKEND PROPERTY STRINGS
-  auto cubeprogrammer stm32flash)
-if(NOT STM32_FLASH_BACKEND MATCHES "^(auto|cubeprogrammer|stm32flash)$")
+  auto cubeprogrammer)
+if(NOT STM32_FLASH_BACKEND MATCHES "^(auto|cubeprogrammer)$")
   message(FATAL_ERROR
-    "STM32_FLASH_BACKEND must be auto, cubeprogrammer, or stm32flash")
+    "STM32_FLASH_BACKEND must be auto or cubeprogrammer")
 endif()
 
 set(STM32_PROGRAMMER_ARGUMENTS)

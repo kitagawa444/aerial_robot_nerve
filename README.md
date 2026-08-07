@@ -50,9 +50,10 @@ trying to install another copy inside the container.
 
 The setup target is idempotent. It installs any missing compiler and C/C++
 runtime apt packages. On x86_64 it installs the official STM32CubeProgrammer
-2.23 bundle through ST's `cube` bundle CLI. On aarch64 it installs `stm32flash`
-from apt, allowing unattended environment setup for UART programming. Apt may
-ask for the local sudo password. The separate setup remains necessary because
+2.23 bundle through ST's `cube` bundle CLI. On aarch64 it downloads the
+official STM32CubeProgrammer 2.23 ARM64 Debian package from the project Google
+Drive, verifies its pinned SHA-256, and installs it with apt. Apt may ask for
+the local sudo password. The separate setup remains necessary because
 the standard rosdep database has no
 key for Ubuntu's `libstdc++-arm-none-eabi-newlib` package. It is deliberately
 not part of the default build, so an ordinary `colcon build` never runs sudo,
@@ -62,6 +63,10 @@ downloads tools, or changes the environment. Non-mutating checks are available:
 colcon build --packages-select spinal_firmware --cmake-target check_stm32_tools
 colcon build --packages-select spinal_firmware --cmake-target check_stm32_programmer
 ```
+
+Invoking `setup_stm32_environment` explicitly downloads and installs the ST
+package and accepts its bundled SLA0048 license prompt. The package retains the
+license and third-party notices under `/usr/bin/doc` and `/usr/share/doc`.
 
 The installed artifacts are:
 
@@ -89,22 +94,20 @@ On x86_64, the setup script finds ST's `cube` CLI on `PATH`, through
 cube bundle install --yes programmer@2.23.0
 ```
 
-ST distributes its Linux ARM64 package behind a license/export-control download
-confirmation. It is optional because `stm32flash` provides the default,
-apt-only UART backend on aarch64. To use the official CLI instead, download
-`stm32cubeprogrammer_*_arm64.deb` once from the
-[STM32CubeProgrammer page](https://www.st.com/en/development-tools/stm32cubeprog.html#st-get-software).
-Then pass the local package or an ST-issued download URL to the setup target;
-validation, dependency installation, and package installation are automatic:
+The repository pins the shared ARM64 package URL and SHA-256, so a new VIM4
+requires no manual CubeProgrammer download. A local package can still override
+the shared artifact:
 
 ```bash
 colcon build --packages-select spinal_firmware \
   --cmake-args -DSTM32_PROGRAMMER_DEB=/path/to/stm32cubeprogrammer_2.23.0_arm64.deb \
   --cmake-target setup_stm32_environment
 
-# Or, for a short-lived URL issued by ST after confirmation:
+# Or, override both URL and checksum together:
 colcon build --packages-select spinal_firmware \
-  --cmake-args -DSTM32_PROGRAMMER_DEB_URL='https://...' \
+  --cmake-args \
+    -DSTM32_PROGRAMMER_DEB_URL='https://...' \
+    -DSTM32_PROGRAMMER_DEB_SHA256='<sha256>' \
   --cmake-target setup_stm32_environment
 ```
 
@@ -134,8 +137,7 @@ ros2 run spinal flash_firmware.py \
 ```
 
 The default installed firmware is `spinal.bin`. A programmer outside `PATH` can
-be selected with `--programmer /path/to/programmer`. `--backend auto` prefers
-STM32CubeProgrammer when available and otherwise selects `stm32flash`.
+be selected with `--programmer /path/to/STM32_Programmer_CLI`.
 
 Build and flash can be run as one explicit CMake target. Configure the stable
 FT232 path and the programmer mounted in Docker on the first invocation:
@@ -155,7 +157,7 @@ FT232/ROM path. The H743 ROM loader can acknowledge UART activation before it
 is ready to accept `GET ID`, so the updater performs non-destructive connection
 probes for up to 30 seconds before it permits Flash erase or programming.
 
-On the VIM4, the complete apt-only setup and UART build/flash flow is:
+On the VIM4, the complete setup and UART build/flash flow is:
 
 ```bash
 source /opt/ros/humble/setup.bash
@@ -164,7 +166,7 @@ colcon build --packages-select spinal_firmware \
 
 colcon build --packages-select spinal_firmware \
   --cmake-args \
-    -DSTM32_FLASH_BACKEND=stm32flash \
+    -DSTM32_FLASH_BACKEND=cubeprogrammer \
     -DSTM32_FLASH_PORT=/dev/serial/by-id/usb-FTDI_FT232R_USB_UART_XXXXXXXX-if00-port0 \
   --cmake-target flash_stm32_uart
 ```
@@ -185,7 +187,7 @@ The updater performs this sequence:
    is required instead of claiming a complete update.
 
 For a UART update, power-cycle the board only after CubeProgrammer prints
-`Download verified successfully` or stm32flash prints `Verification OK`.
+`Download verified successfully`.
 When the updater prints
 `waiting for application service /enter_bootloader`, unplug the board's
 microUSB power, wait about one second, and reconnect it.
