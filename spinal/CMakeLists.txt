@@ -126,9 +126,23 @@ install(DIRECTORY
   DESTINATION share/${PROJECT_NAME}/resource
 )
 
+if(BUILD_TESTING)
+  find_package(ament_cmake_gtest REQUIRED)
+  find_package(ament_cmake_pytest REQUIRED)
+  ament_add_gtest(crsf_protocol_test
+    test/crsf_protocol_test.cpp
+    ${SPINAL_DIRS}/rc/crsf_protocol.cpp
+  )
+  target_include_directories(crsf_protocol_test PRIVATE ${SPINAL_DIRS})
+  ament_add_pytest_test(send_crsf_channels_test
+    test/test_send_crsf_channels.py
+  )
+endif()
+
 install(PROGRAMS
   scripts/topic_hz_checker.py
   scripts/flash_firmware.py
+  scripts/send_crsf_channels.py
   DESTINATION lib/${PROJECT_NAME}
   )
 

@@ -53,6 +53,7 @@
 #include "sensors/gps/gps_ublox.h"
 #include "sensors/gps/gps_ros_module.h"
 #include "sensors/encoder/mag_encoder_ros_module.h"
+#include "rc/crsf_ros_module.h"
 
 #include "battery_status/battery_status_ros_module.h"
 #include "servo/servo_ros_module.h"
@@ -147,7 +148,11 @@ ICM20948 imu_;
 #endif
 
 BaroRosModule baro_ros_mod_;
+#if GPS_FLAG
 GpsRosModule gps_ros_mod_;
+#elif CRSF_RC_INPUT
+CrsfRosModule crsf_ros_mod_;
+#endif
 BatteryStatusRosModule battery_status_ros_mod_;
 ThrusterRosModule thruster_ros_mod_;
 FlightControlRosModule flight_control_ros_mod_;
@@ -338,7 +343,9 @@ int main(void)
   MX_ADC1_Init();
   MX_I2C3_Init();
   MX_USART1_UART_Init();
+#if GPS_FLAG || CRSF_RC_INPUT
   MX_USART3_UART_Init();
+#endif
   MX_TIM1_Init();
   MX_TIM4_Init();
   MX_USART6_UART_Init();
@@ -391,10 +398,18 @@ int main(void)
   baro_ros_mod_.init_hw(&hi2c1, BAROCS_GPIO_Port, BAROCS_Pin);
   ros_mgr_.add(&baro_ros_mod_);
 
+#if GPS_FLAG
   gps_ros_mod_.init_hw(&huart3, LED2_GPIO_Port, LED2_Pin);
   ros_mgr_.add(&gps_ros_mod_);
-
-  estimator_ros_mod_.init_hw(&imu_, baro_ros_mod_.getBaroHw(), gps_ros_mod_.getGpsHw());  // imu + baro + gps => att + alt + pos(xy)
+  estimator_ros_mod_.init_hw(
+    &imu_, baro_ros_mod_.getBaroHw(), gps_ros_mod_.getGpsHw());
+#elif CRSF_RC_INPUT
+  crsf_ros_mod_.init_hw(&huart3);
+  ros_mgr_.add(&crsf_ros_mod_);
+  estimator_ros_mod_.init_hw(&imu_, baro_ros_mod_.getBaroHw(), nullptr);
+#else
+  estimator_ros_mod_.init_hw(&imu_, baro_ros_mod_.getBaroHw(), nullptr);
+#endif
   ros_mgr_.add(&estimator_ros_mod_);
 
 /*   DShot* dshotptr = nullptr; */
@@ -1153,7 +1168,11 @@ static void MX_USART3_UART_Init(void)
 
   /* USER CODE END USART3_Init 1 */
   huart3.Instance = USART3;
+#if CRSF_RC_INPUT
+  huart3.Init.BaudRate = 420000;
+#else
   huart3.Init.BaudRate = 115200;
+#endif
   huart3.Init.WordLength = UART_WORDLENGTH_8B;
   huart3.Init.StopBits = UART_STOPBITS_1;
   huart3.Init.Parity = UART_PARITY_NONE;
@@ -1163,7 +1182,11 @@ static void MX_USART3_UART_Init(void)
   huart3.Init.OneBitSampling = UART_ONE_BIT_SAMPLE_DISABLE;
   huart3.Init.ClockPrescaler = UART_PRESCALER_DIV1;
   huart3.AdvancedInit.AdvFeatureInit = UART_ADVFEATURE_NO_INIT;
+#if CRSF_RC_INPUT
+  if (HAL_UART_Init(&huart3) != HAL_OK)
+#else
   if (HAL_HalfDuplex_Init(&huart3) != HAL_OK)
+#endif
   {
     Error_Handler();
   }
@@ -1379,7 +1402,11 @@ void coreTaskFunc(void const * argument)
       /* Spine::send(); */
       imu_.update();
       baro_ros_mod_.update();
+#if GPS_FLAG
       gps_ros_mod_.update();
+#elif CRSF_RC_INPUT
+      crsf_ros_mod_.update();
+#endif
       estimator_ros_mod_.update();
       flight_control_ros_mod_.update();
       thruster_ros_mod_.sendCommand();
@@ -1471,7 +1498,11 @@ void rosSpinTaskFunc(void const * argument)
         {
           osMutexWait(ros_cxt_.ros_mutex, osWaitForever);
           rclc_executor_spin_some(&ros_cxt_.executor, RCL_MS_TO_NS(0));
+#if GPS_FLAG
           gps_ros_mod_.publish();
+#elif CRSF_RC_INPUT
+          crsf_ros_mod_.publish();
+#endif
           servo_ros_mod_.publish();
           thruster_ros_mod_.publish();
           flight_control_ros_mod_.publish();

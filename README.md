@@ -220,6 +220,95 @@ configuration sector at `0x081e0000`. Fully unattended updates without ST-LINK
 require either a board revision exposing BOOT0 and NRST to the host, or a custom
 Flash-resident bootloader that does not enter the factory ROM loader.
 
+## ExpressLRS / CRSF receiver on UART3
+
+The STM32H7 v2 configuration enables `CRSF_RC_INPUT` on UART3. UART3 is set to
+420000 baud, 8-N-1, uninverted, full duplex. Because GPS previously used the
+same UART, `GPS_FLAG` and `CRSF_RC_INPUT` are mutually exclusive compile-time
+options in `configs/STM32H7_v2/config.h`.
+
+Wire the ExpressLRS receiver to the v2 board's J7 connector as follows:
+
+| Receiver pad | J7 pin | STM32 signal |
+| --- | ---: | --- |
+| TX | 1 | USART3_RX / PD9 |
+| RX | 2 | USART3_TX / PD8 (optional until telemetry is implemented) |
+| GND | 3 | GND |
+| 5V | 4 | +5V |
+
+The receiver's TX and the board's RX must be crossed. The firmware validates
+the CRSF CRC8 before accepting a frame, decodes all 16 packed channels, and
+marks the link disconnected when no valid RC channel frame arrives for 100 ms.
+It does not feed RC values directly into flight control or motor outputs.
+
+The following root topics are published and also relayed by
+`spinal_namespace_bridge` into the configured robot namespace:
+
+```text
+/rc/joy           sensor_msgs/msg/Joy  # axes[0]..axes[15], normalized -1..1
+/rc/connected     std_msgs/msg/Bool
+/rc/link_quality  std_msgs/msg/UInt8   # uplink link quality, 0..100
+```
+
+After building, flashing, and starting the micro-ROS agent, verify reception
+before connecting the values to flight control:
+
+```bash
+ros2 topic echo /rc/connected
+ros2 topic hz /rc/joy
+ros2 topic echo /rc/joy --once
+```
+
+Channel order and transmitter switch assignment are intentionally left in the
+native CRSF order. Mapping roll, pitch, yaw, throttle, arm, and kill switches
+is a separate safety layer and should include an explicit failsafe policy.
+
+### Nano TX without a handset
+
+A PC or VIM4 can provide the handset-side CRSF stream through the Nano TX V2
+USB serial port. The standalone script does not require ROS to be running. Its
+safe defaults use the conventional AETR order: CH1, CH2, and CH4 are centred,
+CH3 (throttle) is low, and CH5 through CH16 are low.
+
+Keep the Nano TX antenna attached whenever the module is powered. With motors
+disconnected, reconnect the Nano TX USB cable so it leaves Wi-Fi mode, then run:
+
+```bash
+python3 spinal/scripts/send_crsf_channels.py
+
+# After building and sourcing the ROS 2 workspace, the installed form is:
+ros2 run spinal send_crsf_channels.py
+```
+
+The QinHeng USB serial device is detected automatically. An explicit stable
+device path can also be used:
+
+```bash
+ros2 run spinal send_crsf_channels.py \
+  --port /dev/serial/by-id/usb-1a86_USB_Single_Serial_XXXXXXXX-if00
+```
+
+The default handset-side baud rate is `115200`, which the ExpressLRS TX module
+auto-detects. Although a module-bay CRSF connection commonly uses `400000`, the
+Nano TX V2 QinHeng USB CDC bridge stalled when that non-standard rate was
+requested on the tested Ubuntu host. It sustained the default 250 Hz stream at
+`115200`.
+
+Values are raw 11-bit CRSF values (`172` low, `992` centre, `1811` high).
+Override individual one-based channels with repeatable `--set` arguments:
+
+```bash
+# Show the generated frame without using hardware.
+ros2 run spinal send_crsf_channels.py --dry-run --set 1=1100
+
+# Send for ten seconds, then stop and let the receiver enter failsafe.
+ros2 run spinal send_crsf_channels.py --duration 10 --set 1=1100
+```
+
+Pressing Ctrl-C stops the CRSF stream. Stopping the stream must be treated as a
+receiver failsafe; this script is only a fixed-channel bring-up utility and is
+not a flight-control input or an arming implementation.
+
 ## Generate & Build micro ROS agent
 ```bash
 source install/setup.bash  # setup.zsh if using zsh

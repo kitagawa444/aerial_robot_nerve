@@ -55,6 +55,9 @@ const std::vector<std::string> kDefaultRootToNamespaceTopics = {
   "battery_voltage_status:std_msgs/msg/Float32",
   "gps:spinal_msgs/msg/Gps",
   "encoder_angle:std_msgs/msg/UInt16",
+  "rc/joy:sensor_msgs/msg/Joy",
+  "rc/connected:std_msgs/msg/Bool",
+  "rc/link_quality:std_msgs/msg/UInt8",
 };
 
 const std::vector<std::string> kDefaultNamespaceToRootTopics = {
