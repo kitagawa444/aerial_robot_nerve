@@ -153,7 +153,12 @@ def infer_backend(executable: str) -> str:
 def resolve_programmer(backend: str, override: Optional[str]) -> Programmer:
     if override:
         executable = resolve_executable(override)
-        selected_backend = infer_backend(executable) if backend == "auto" else backend
+        inferred_backend = infer_backend(executable)
+        if backend != "auto" and backend != inferred_backend:
+            raise FirmwareUpdateError(
+                f"programmer {executable} is {inferred_backend}, not {backend}"
+            )
+        selected_backend = inferred_backend if backend == "auto" else backend
         return Programmer(executable=executable, backend=selected_backend)
 
     data_root = Path(
@@ -174,6 +179,11 @@ def resolve_programmer(backend: str, override: Optional[str]) -> Programmer:
             "cubeprogrammer",
         ),
     ]
+
+    if backend != "auto":
+        candidates = [
+            candidate for candidate in candidates if candidate[1] == backend
+        ]
 
     for name, candidate_backend in candidates:
         executable = find_executable(name)
@@ -465,6 +475,7 @@ def programmer_commands(
     if interface == "uart":
         command = [
             programmer.executable,
+            "--quietMode",
             "-c",
             f"port={port}",
             f"br={baud}",
@@ -477,6 +488,7 @@ def programmer_commands(
     # the application even if programming is interrupted later.
     restore_boot_address = [
         programmer.executable,
+        "--quietMode",
         "-c",
         "port=SWD",
         "mode=HOTPLUG",
@@ -484,7 +496,13 @@ def programmer_commands(
         CM7_BOOT_ADDRESS_REGISTER,
         APPLICATION_ADDRESS,
     ]
-    program = [programmer.executable, "-c", "port=SWD", "mode=HOTPLUG"]
+    program = [
+        programmer.executable,
+        "--quietMode",
+        "-c",
+        "port=SWD",
+        "mode=HOTPLUG",
+    ]
     append_firmware_write(program, firmware)
     return [restore_boot_address, program]
 
@@ -498,6 +516,7 @@ def wait_for_uart_bootloader(
     """Wait until GET ID succeeds before allowing an erase/write command."""
     command = [
         programmer.executable,
+        "--quietMode",
         "-c",
         f"port={port}",
         f"br={baud}",
@@ -571,7 +590,6 @@ def main() -> int:
         # Validate before requesting a reset, since a preflight failure must not
         # leave the flight controller in system memory.
         validate_programmer(programmer)
-
         if args.agent_start_command and not args.agent_stop_command:
             raise FirmwareUpdateError(
                 "--agent-start-command requires --agent-stop-command"

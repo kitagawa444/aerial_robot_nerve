@@ -2,7 +2,9 @@
 
 set -euo pipefail
 
-readonly PACKAGES=(
+PACKAGES=(
+  ca-certificates
+  curl
   gcc-arm-none-eabi
   binutils-arm-none-eabi
   libnewlib-arm-none-eabi
@@ -57,6 +59,10 @@ for command_name in \
     missing+=("${command_name}")
   fi
 done
+
+if ! command -v curl >/dev/null 2>&1; then
+  missing+=(curl)
+fi
 
 if command -v arm-none-eabi-g++ >/dev/null 2>&1; then
   for library_name in libstdc++.a libsupc++.a; do

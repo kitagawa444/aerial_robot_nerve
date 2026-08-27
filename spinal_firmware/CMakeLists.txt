@@ -9,6 +9,14 @@ endif()
 
 set(STM32_PROGRAMMER "" CACHE FILEPATH
   "Optional path to STM32_Programmer_CLI (2.23 or newer)")
+set(STM32_PROGRAMMER_DEB "" CACHE FILEPATH
+  "Optional path to ST's STM32CubeProgrammer 2.23 ARM64 Debian package")
+set(STM32_PROGRAMMER_DEB_URL
+  "https://drive.usercontent.google.com/download?id=1gX2pNBjZ8pFm_DzgV1kgPRpxuWnluyDC&export=download&confirm=t"
+  CACHE STRING "URL for the STM32CubeProgrammer 2.23 ARM64 Debian package")
+set(STM32_PROGRAMMER_DEB_SHA256
+  "46b844fd135627290d2d0af3d3897debfa4247ec6af7d1cea3e0e9b0fb0bd31d"
+  CACHE STRING "SHA-256 for the STM32CubeProgrammer 2.23 ARM64 Debian package")
 
 set(FIRMWARE_SOURCE_DIR "${CMAKE_CURRENT_SOURCE_DIR}/firmware")
 set(FIRMWARE_BUILD_DIR "${CMAKE_CURRENT_BINARY_DIR}/firmware_build")
@@ -33,24 +41,29 @@ add_custom_target(setup_stm32_tools
 add_custom_target(check_stm32_programmer
   COMMAND "${CMAKE_COMMAND}" -E env
     "STM32_PROGRAMMER=${STM32_PROGRAMMER}"
+    "STM32_PROGRAMMER_DEB=${STM32_PROGRAMMER_DEB}"
+    "STM32_PROGRAMMER_DEB_URL=${STM32_PROGRAMMER_DEB_URL}"
+    "STM32_PROGRAMMER_DEB_SHA256=${STM32_PROGRAMMER_DEB_SHA256}"
     "${CMAKE_CURRENT_SOURCE_DIR}/scripts/bootstrap_stm32_programmer.sh"
     --check-only
   USES_TERMINAL
   VERBATIM
-  COMMENT "Checking STM32CubeProgrammer")
+  COMMENT "Checking the STM32 programming tool")
 
 add_custom_target(setup_stm32_programmer
   COMMAND "${CMAKE_COMMAND}" -E env
     "STM32_PROGRAMMER=${STM32_PROGRAMMER}"
+    "STM32_PROGRAMMER_DEB=${STM32_PROGRAMMER_DEB}"
+    "STM32_PROGRAMMER_DEB_URL=${STM32_PROGRAMMER_DEB_URL}"
+    "STM32_PROGRAMMER_DEB_SHA256=${STM32_PROGRAMMER_DEB_SHA256}"
     "${CMAKE_CURRENT_SOURCE_DIR}/scripts/bootstrap_stm32_programmer.sh"
   USES_TERMINAL
   VERBATIM
-  COMMENT "Installing the official STM32CubeProgrammer bundle")
+  COMMENT "Installing the STM32 programming tool for this host")
 
 add_custom_target(setup_stm32_environment)
-add_dependencies(setup_stm32_environment
-  setup_stm32_tools
-  setup_stm32_programmer)
+add_dependencies(setup_stm32_programmer setup_stm32_tools)
+add_dependencies(setup_stm32_environment setup_stm32_programmer)
 
 file(GLOB_RECURSE FIRMWARE_INPUTS CONFIGURE_DEPENDS
   "${CMAKE_CURRENT_SOURCE_DIR}/../spinal/mcu_project/lib/My_Lib/*.cpp"
