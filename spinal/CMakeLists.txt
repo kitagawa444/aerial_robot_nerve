@@ -36,6 +36,9 @@ add_library(spinal_math
 set_target_properties(spinal_math PROPERTIES POSITION_INDEPENDENT_CODE ON)
 
 add_library(spinal_flight_control
+  ${SPINAL_DIRS}/rc/crsf_protocol.cpp
+  ${SPINAL_DIRS}/rc/crsf_teleop.cpp
+  ${SPINAL_DIRS}/rc/simulation/crsf_ros_module.cpp
   ${SPINAL_DIRS}/flight_control/flight_control.cpp
   ${SPINAL_DIRS}/flight_control/attitude/attitude_control.cpp
   ${SPINAL_DIRS}/flight_control/simulation/flight_control_ros_module.cpp
@@ -125,6 +128,21 @@ install(DIRECTORY
   resource/
   DESTINATION share/${PROJECT_NAME}/resource
 )
+
+if(BUILD_TESTING)
+  find_package(ament_cmake_gtest REQUIRED)
+  find_package(ament_cmake_pytest REQUIRED)
+  ament_add_gtest(crsf_protocol_test
+    test/crsf_protocol_test.cpp
+    ${SPINAL_DIRS}/rc/crsf_protocol.cpp
+  )
+  target_include_directories(crsf_protocol_test PRIVATE ${SPINAL_DIRS})
+  ament_add_gtest(crsf_teleop_test
+    test/crsf_teleop_test.cpp
+    ${SPINAL_DIRS}/rc/crsf_teleop.cpp
+  )
+  target_include_directories(crsf_teleop_test PRIVATE ${SPINAL_DIRS})
+endif()
 
 install(PROGRAMS
   scripts/topic_hz_checker.py

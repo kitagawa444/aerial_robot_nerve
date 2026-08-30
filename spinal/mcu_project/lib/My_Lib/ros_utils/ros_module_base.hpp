@@ -172,6 +172,36 @@ public:
     return true;
   }
 
+  bool init_publisher_reliable(
+    rcl_node_t& node,
+    rcl_publisher_t& pub,
+    const rosidl_message_type_support_t* type_support,
+    const char* topic_name)
+  {
+    if (pub_entries_.size() >= max_pub_num_) return false;
+    if (type_support == nullptr || topic_name == nullptr) return false;
+
+    rcl_ret_t rc = rclc_publisher_init_default(
+      &pub,
+      &node,
+      type_support,
+      topic_name);
+
+    if (rc != RCL_RET_OK) {
+      (void)rcl_publisher_fini(&pub, &node);
+      return false;
+    }
+
+    PubEntry e;
+    e.pub = &pub;
+    e.type_support = type_support;
+    e.topic_name = topic_name;
+    pub_entries_.push_back(e);
+
+    ros_entities_ready_ = true;
+    return true;
+  }
+
   bool init_subscription_default(
     rcl_node_t& node,
     rcl_subscription_t& sub,
