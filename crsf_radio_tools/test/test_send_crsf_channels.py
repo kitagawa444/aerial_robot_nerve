@@ -22,7 +22,7 @@ class SendCrsfChannelsTest(unittest.TestCase):
         frame = CRSF_TX.build_rc_channels_frame(channels)
 
         self.assertEqual(len(frame), 26)
-        self.assertEqual(frame[:3], bytes((0xEE, 24, 0x16)))
+        self.assertEqual(frame[:3], bytes((0xC8, 24, 0x16)))
         self.assertEqual(frame[-1], CRSF_TX.crc8_dvb_s2(frame[2:-1]))
 
         packed = int.from_bytes(frame[3:-1], byteorder="little")

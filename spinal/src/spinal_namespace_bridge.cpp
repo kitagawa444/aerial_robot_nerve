@@ -58,6 +58,7 @@ const std::vector<std::string> kDefaultRootToNamespaceTopics = {
   "rc/joy:sensor_msgs/msg/Joy",
   "rc/connected:std_msgs/msg/Bool",
   "rc/link_quality:std_msgs/msg/UInt8",
+  "rc/teleop_command:std_msgs/msg/UInt8",
 };
 
 const std::vector<std::string> kDefaultNamespaceToRootTopics = {

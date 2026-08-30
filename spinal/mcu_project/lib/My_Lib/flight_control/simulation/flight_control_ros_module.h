@@ -24,6 +24,7 @@
 #include <std_srvs/srv/set_bool.hpp>
 
 #include "flight_control/flight_control.h"
+#include "rc/simulation/crsf_ros_module.h"
 #include "state_estimate/state_estimate.h"
 #include "thruster/simulation/thruster_manager.h"
 
@@ -42,12 +43,13 @@ public:
 
   void activate();
   void deactivate();
-  void update() { flight_control_.update(); }
+  void update();
   void publish();
 
 private:
   std::shared_ptr<rclcpp_lifecycle::LifecycleNode> node_;
   FlightControl flight_control_;
+  CrsfRosModuleSim crsf_ros_module_;
   ThrusterManager* thruster_{nullptr};
   bool initialized_{false};
 

@@ -14,10 +14,31 @@ void FlightControlRosModule::init(
   thruster_ = thruster;
   flight_control_.init(estimator, thruster, nullptr);
 
+  if (!node_->has_parameter("rc_serial_port"))
+  {
+    (void)node_->declare_parameter<std::string>("rc_serial_port", "");
+  }
+  if (!node_->has_parameter("rc_serial_baud"))
+  {
+    (void)node_->declare_parameter<int64_t>("rc_serial_baud", crsf::DEFAULT_BAUD_RATE);
+  }
+  const std::string rc_serial_port = node_->get_parameter("rc_serial_port").as_string();
+  const int64_t rc_serial_baud = node_->get_parameter("rc_serial_baud").as_int();
+  crsf_ros_module_.init(
+    node_, rc_serial_port,
+    rc_serial_baud > 0 ? static_cast<uint32_t>(rc_serial_baud) : crsf::DEFAULT_BAUD_RATE,
+    &flight_control_);
+
   if (!initialized_) {
     configureRosIo_();
     initialized_ = true;
   }
+}
+
+void FlightControlRosModule::update()
+{
+  crsf_ros_module_.update();
+  flight_control_.update();
 }
 
 void FlightControlRosModule::activate()

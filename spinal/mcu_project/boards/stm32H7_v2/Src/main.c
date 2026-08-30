@@ -404,7 +404,10 @@ int main(void)
   estimator_ros_mod_.init_hw(
     &imu_, baro_ros_mod_.getBaroHw(), gps_ros_mod_.getGpsHw());
 #elif CRSF_RC_INPUT
-  crsf_ros_mod_.init_hw(&huart3);
+  crsf_ros_mod_.init_hw(
+    &huart3,
+    flight_control_ros_mod_.getFlightControlCore(),
+    &flightControlMutexHandle);
   ros_mgr_.add(&crsf_ros_mod_);
   estimator_ros_mod_.init_hw(&imu_, baro_ros_mod_.getBaroHw(), nullptr);
 #else
@@ -1176,7 +1179,11 @@ static void MX_USART3_UART_Init(void)
   huart3.Init.WordLength = UART_WORDLENGTH_8B;
   huart3.Init.StopBits = UART_STOPBITS_1;
   huart3.Init.Parity = UART_PARITY_NONE;
+#if CRSF_RC_INPUT
+  huart3.Init.Mode = UART_MODE_RX;
+#else
   huart3.Init.Mode = UART_MODE_TX_RX;
+#endif
   huart3.Init.HwFlowCtl = UART_HWCONTROL_NONE;
   huart3.Init.OverSampling = UART_OVERSAMPLING_16;
   huart3.Init.OneBitSampling = UART_ONE_BIT_SAMPLE_DISABLE;

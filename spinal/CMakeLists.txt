@@ -36,6 +36,9 @@ add_library(spinal_math
 set_target_properties(spinal_math PROPERTIES POSITION_INDEPENDENT_CODE ON)
 
 add_library(spinal_flight_control
+  ${SPINAL_DIRS}/rc/crsf_protocol.cpp
+  ${SPINAL_DIRS}/rc/crsf_teleop.cpp
+  ${SPINAL_DIRS}/rc/simulation/crsf_ros_module.cpp
   ${SPINAL_DIRS}/flight_control/flight_control.cpp
   ${SPINAL_DIRS}/flight_control/attitude/attitude_control.cpp
   ${SPINAL_DIRS}/flight_control/simulation/flight_control_ros_module.cpp
@@ -134,15 +137,16 @@ if(BUILD_TESTING)
     ${SPINAL_DIRS}/rc/crsf_protocol.cpp
   )
   target_include_directories(crsf_protocol_test PRIVATE ${SPINAL_DIRS})
-  ament_add_pytest_test(send_crsf_channels_test
-    test/test_send_crsf_channels.py
+  ament_add_gtest(crsf_teleop_test
+    test/crsf_teleop_test.cpp
+    ${SPINAL_DIRS}/rc/crsf_teleop.cpp
   )
+  target_include_directories(crsf_teleop_test PRIVATE ${SPINAL_DIRS})
 endif()
 
 install(PROGRAMS
   scripts/topic_hz_checker.py
   scripts/flash_firmware.py
-  scripts/send_crsf_channels.py
   DESTINATION lib/${PROJECT_NAME}
   )
 

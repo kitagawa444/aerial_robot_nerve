@@ -767,7 +767,9 @@ void HAL_UART_MspInit(UART_HandleTypeDef* huart)
     PD9     ------> USART3_RX
     */
 #if CRSF_RC_INPUT
-    GPIO_InitStruct.Pin = GPIO_PIN_8|GPIO_PIN_9;
+    /* Receive-only CRSF: leave PD8/USART3_TX unconfigured so the FC cannot
+       send telemetry payloads back to the ExpressLRS receiver. */
+    GPIO_InitStruct.Pin = GPIO_PIN_9;
     GPIO_InitStruct.Mode = GPIO_MODE_AF_PP;
     GPIO_InitStruct.Speed = GPIO_SPEED_FREQ_VERY_HIGH;
 #else
@@ -913,7 +915,7 @@ void HAL_UART_MspDeInit(UART_HandleTypeDef* huart)
     PD9     ------> USART3_RX
     */
 #if CRSF_RC_INPUT
-    HAL_GPIO_DeInit(GPIOD, GPIO_PIN_8|GPIO_PIN_9);
+    HAL_GPIO_DeInit(GPIOD, GPIO_PIN_9);
 #else
     HAL_GPIO_DeInit(GPIOD, GPIO_PIN_8);
 #endif

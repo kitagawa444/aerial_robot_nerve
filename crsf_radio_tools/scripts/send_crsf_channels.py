@@ -16,7 +16,8 @@ import time
 from typing import Iterable, Sequence
 
 
-CRSF_TRANSMITTER_ADDRESS = 0xEE
+# ExpressLRS 4.x handset serial input uses the CRSF sync/address byte 0xC8.
+CRSF_TRANSMITTER_ADDRESS = 0xC8
 CRSF_FRAME_TYPE_RC_CHANNELS_PACKED = 0x16
 CRSF_CHANNEL_COUNT = 16
 CRSF_CHANNEL_MIN = 172
