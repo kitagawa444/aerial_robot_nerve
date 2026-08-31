@@ -10,16 +10,10 @@
 #include <sys/ioctl.h>
 #include <unistd.h>
 
-CrsfRosModuleSim::~CrsfRosModuleSim()
-{
-  close_serial_();
-}
+CrsfRosModuleSim::~CrsfRosModuleSim() { close_serial_(); }
 
-void CrsfRosModuleSim::init(
-  const std::shared_ptr<rclcpp_lifecycle::LifecycleNode>& node,
-  const std::string& serial_port,
-  uint32_t serial_baud,
-  FlightControl* flight_control)
+void CrsfRosModuleSim::init(const std::shared_ptr<rclcpp_lifecycle::LifecycleNode> &node,
+                            const std::string &serial_port, uint32_t serial_baud, FlightControl *flight_control)
 {
   node_ = node;
   serial_port_ = serial_port;
@@ -28,8 +22,7 @@ void CrsfRosModuleSim::init(
 
   if (!node_ || serial_port_.empty()) return;
 
-  teleop_command_pub_ = node_->create_publisher<std_msgs::msg::UInt8>(
-    "rc/teleop_command", rclcpp::QoS(10).reliable());
+  teleop_command_pub_ = node_->create_publisher<std_msgs::msg::UInt8>("rc/teleop_command", rclcpp::QoS(10).reliable());
 
   last_open_attempt_ms_ = steady_time_ms_() - REOPEN_INTERVAL_MS;
   (void)open_serial_();
@@ -66,17 +59,16 @@ void CrsfRosModuleSim::update()
     }
     if (count < 0 && errno != EAGAIN && errno != EWOULDBLOCK && errno != EINTR)
     {
-      RCLCPP_ERROR(node_->get_logger(), "CRSF serial read failed on %s: errno=%d",
-                   serial_port_.c_str(), errno);
+      RCLCPP_ERROR(node_->get_logger(), "CRSF serial read failed on %s: errno=%d", serial_port_.c_str(), errno);
       close_serial_();
     }
     break;
   }
 
-  if (connected_ &&
-      static_cast<uint32_t>(now_ms - last_rc_frame_ms_) > crsf::SIGNAL_TIMEOUT_MS)
+  if (connected_ && static_cast<uint32_t>(now_ms - last_rc_frame_ms_) > crsf::SIGNAL_TIMEOUT_MS)
   {
     connected_ = false;
+    apply_rc_input_(parser_.channels(), false);
     (void)teleop_interpreter_.update(nullptr, 0U, false, now_ms);
   }
 }
@@ -84,8 +76,7 @@ void CrsfRosModuleSim::update()
 uint32_t CrsfRosModuleSim::steady_time_ms_()
 {
   using namespace std::chrono;
-  return static_cast<uint32_t>(
-    duration_cast<milliseconds>(steady_clock::now().time_since_epoch()).count());
+  return static_cast<uint32_t>(duration_cast<milliseconds>(steady_clock::now().time_since_epoch()).count());
 }
 
 bool CrsfRosModuleSim::open_serial_()
@@ -96,9 +87,8 @@ bool CrsfRosModuleSim::open_serial_()
   serial_fd_ = ::open(serial_port_.c_str(), O_RDONLY | O_NOCTTY | O_NONBLOCK);
   if (serial_fd_ < 0)
   {
-    RCLCPP_WARN_THROTTLE(
-      node_->get_logger(), *node_->get_clock(), 5000,
-      "Cannot open CRSF serial port %s", serial_port_.c_str());
+    RCLCPP_WARN_THROTTLE(node_->get_logger(), *node_->get_clock(), 5000, "Cannot open CRSF serial port %s",
+                         serial_port_.c_str());
     return false;
   }
 
@@ -130,8 +120,7 @@ bool CrsfRosModuleSim::open_serial_()
   parser_.reset();
   teleop_interpreter_.reset();
   connected_ = false;
-  RCLCPP_INFO(node_->get_logger(), "CRSF radio-in-the-loop input: %s at %u baud",
-              serial_port_.c_str(), serial_baud_);
+  RCLCPP_INFO(node_->get_logger(), "CRSF radio-in-the-loop input: %s at %u baud", serial_port_.c_str(), serial_baud_);
   return true;
 }
 
@@ -144,18 +133,19 @@ void CrsfRosModuleSim::close_serial_()
   }
   connected_ = false;
   teleop_interpreter_.reset();
+  apply_rc_input_(parser_.channels(), false);
 }
 
 void CrsfRosModuleSim::handle_rc_frame_(uint32_t now_ms)
 {
   connected_ = true;
   last_rc_frame_ms_ = now_ms;
-  const crsf::RcChannels& channels = parser_.channels();
-  publish_events_(teleop_interpreter_.update(
-    channels.raw, crsf::CHANNEL_COUNT, true, now_ms));
+  const crsf::RcChannels &channels = parser_.channels();
+  apply_rc_input_(channels, true);
+  publish_events_(teleop_interpreter_.update(channels.raw, crsf::CHANNEL_COUNT, true, now_ms));
 }
 
-void CrsfRosModuleSim::publish_events_(const crsf::TeleopEvents& events)
+void CrsfRosModuleSim::publish_events_(const crsf::TeleopEvents &events)
 {
   if (events.arm) apply_direct_command_(FlightControlCommand::ARM_ON_CMD);
   if (events.takeoff) publish_command_(crsf::TeleopCommand::Takeoff);
@@ -180,11 +170,20 @@ void CrsfRosModuleSim::apply_direct_command_(uint8_t command)
   if (flight_control_ == nullptr) return;
   if (!flight_control_->applyFlightConfig(command))
   {
-    RCLCPP_WARN(
-      node_->get_logger(),
-      "Rejected direct CRSF flight command %u",
-      static_cast<unsigned int>(command));
+    RCLCPP_WARN(node_->get_logger(), "Rejected direct CRSF flight command %u", static_cast<unsigned int>(command));
   }
+}
+
+void CrsfRosModuleSim::apply_rc_input_(const crsf::RcChannels &channels, bool connected)
+{
+  if (flight_control_ == nullptr) return;
+  PositionControlRcInput input;
+  input.lateral = crsf::Parser::normalize_channel(channels.raw[0]);
+  input.forward = crsf::Parser::normalize_channel(channels.raw[1]);
+  input.vertical = crsf::Parser::normalize_channel(channels.raw[2]);
+  input.yaw = crsf::Parser::normalize_channel(channels.raw[3]);
+  input.connected = connected;
+  flight_control_->applyPositionControlRcInput(input);
 }
 
 #endif  // SIMULATION

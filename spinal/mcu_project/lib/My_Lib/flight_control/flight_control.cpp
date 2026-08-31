@@ -6,18 +6,17 @@
 
 #ifdef SIMULATION
 #include "thruster/simulation/thruster_manager.h"
+#include <chrono>
 #else
 #include "servo/servo.h"
 #include "thruster/board/thruster_manager.h"
 #endif
 
-void FlightControl::init(
-  StateEstimate* estimator,
-  ThrusterManager* thruster,
+void FlightControl::init(StateEstimate *estimator, ThrusterManager *thruster,
 #ifndef SIMULATION
-  DirectServo* servo
+                         DirectServo *servo
 #else
-  void* servo
+                         void *servo
 #endif
 )
 {
@@ -32,6 +31,8 @@ void FlightControl::init(
 #endif
 
   att_controller_.init(estimator_);
+  position_controller_.reset();
+  position_controller_.setEnabled(false);
   start_control_flag_ = false;
   force_landing_flag_ = false;
   gimbal_set_flag_ = false;
@@ -42,24 +43,49 @@ void FlightControl::init(
 void FlightControl::update()
 {
   ThrusterControlLimits limits;
-  if (thruster_ != nullptr) {
+  if (thruster_ != nullptr)
+  {
     limits = thruster_->getControlLimits();
   }
 
   att_controller_.setThrusterLimits(limits);
+
+  if (!force_landing_flag_ && position_controller_.enabled() && position_controller_.active() && start_control_flag_ &&
+      estimator_ != nullptr)
+  {
+    FlightControlFourAxisCommand position_command;
+    const uint32_t now_ms = nowMillis_();
+    if (!att_controller_.getIntegrateFlag() &&
+        position_controller_.shouldEnableAttitudeIntegration(estimator_->outputState()))
+    {
+      att_controller_.setIntegrateFlag(true);
+    }
+    if (estimator_->positionControlStateValid() &&
+        position_controller_.update(estimator_->outputState(), estimator_->stateValidity(), now_ms, position_command))
+    {
+      (void)att_controller_.applyFourAxisCommand(position_command);
+    }
+    else if (!force_landing_flag_)
+    {
+      force_landing_flag_ = true;
+      att_controller_.setForceLandingFlag(true);
+      setConfigAck_(FlightControlCommand::FORCE_LANDING_CMD);
+    }
+  }
+
   att_controller_.update();
 
-  if (!force_landing_flag_ && att_controller_.getForceLandingFlag()) {
+  if (!force_landing_flag_ && att_controller_.getForceLandingFlag())
+  {
     force_landing_flag_ = true;
     setConfigAck_(FlightControlCommand::FORCE_LANDING_CMD);
   }
 
-  if (thruster_ != nullptr) {
+  if (thruster_ != nullptr)
+  {
     thruster_->setRotorDivider(att_controller_.getRotorDivider());
-    (void)thruster_->outputThrust(
-      att_controller_.getTargetThrust(),
-      att_controller_.getThrusterCount(),
-      start_control_flag_);
+    (void)thruster_->outputThrust(att_controller_.getTargetThrust(), att_controller_.getThrusterCount(),
+                                  start_control_flag_);
   }
 
   applyGimbalOutput_();
@@ -67,16 +93,23 @@ void FlightControl::update()
 
 bool FlightControl::applyFlightConfig(uint8_t command)
 {
-  switch (command) {
-    case FlightControlCommand::ARM_ON_CMD:
-    {
+  switch (command)
+  {
+    case FlightControlCommand::ARM_ON_CMD: {
       ThrusterControlLimits limits;
-      if (thruster_ != nullptr) {
+      if (thruster_ != nullptr)
+      {
         limits = thruster_->getControlLimits();
       }
 
       att_controller_.setThrusterLimits(limits);
       if (!att_controller_.activated()) return false;
+      if (position_controller_.enabled() &&
+          (estimator_ == nullptr || !estimator_->positionControlStateValid() ||
+           !position_controller_.ready(estimator_->outputState(), estimator_->stateValidity(), nowMillis_())))
+      {
+        return false;
+      }
 
       force_landing_flag_ = false;
       att_controller_.setForceLandingFlag(false);
@@ -93,6 +126,7 @@ bool FlightControl::applyFlightConfig(uint8_t command)
       att_controller_.setStartControlFlag(false);
       force_landing_flag_ = false;
       att_controller_.setForceLandingFlag(false);
+      position_controller_.reset();
       setConfigAck_(FlightControlCommand::ARM_OFF_CMD);
       return true;
 
@@ -122,7 +156,8 @@ void FlightControl::applyUavInfo(uint8_t motor_num, int8_t uav_model)
   physical_motor_count_ = motor_num;
   att_controller_.setUavModel(uav_model);
 
-  if (thruster_ != nullptr) {
+  if (thruster_ != nullptr)
+  {
     thruster_->setRotorDivider(att_controller_.getRotorDivider());
   }
 
@@ -131,7 +166,8 @@ void FlightControl::applyUavInfo(uint8_t motor_num, int8_t uav_model)
 
 void FlightControl::applyGimbalDof(uint8_t gimbal_dof)
 {
-  if (gimbal_dof != 0 && !gimbal_set_flag_) {
+  if (gimbal_dof != 0 && !gimbal_set_flag_)
+  {
     att_controller_.setGimbalDof(gimbal_dof);
     att_controller_.setRotorCoef(gimbal_dof + 1);
     gimbal_set_flag_ = true;
@@ -139,37 +175,69 @@ void FlightControl::applyGimbalDof(uint8_t gimbal_dof)
   }
 }
 
-bool FlightControl::applyFourAxisCommand(const FlightControlFourAxisCommand& cmd)
+bool FlightControl::applyFourAxisCommand(const FlightControlFourAxisCommand &cmd)
 {
+  if (position_controller_.enabled()) return false;
   return att_controller_.applyFourAxisCommand(cmd);
 }
 
-bool FlightControl::applyRpyGains(const FlightControlRpyTerms& gains)
+bool FlightControl::applyPositionControlConfig(const PositionControlConfig &config)
 {
-  return att_controller_.applyRpyGains(gains);
+  // Gain and limit changes preserve controller state. Structural changes are
+  // still disarmed-only because they require resetting the controller.
+  if (start_control_flag_ && !position_controller_.canReconfigureInFlight(config)) return false;
+  return position_controller_.configure(config);
 }
 
-bool FlightControl::applyPMatrixInertia(const FlightControlPMatrixPseudoInverseWithInertia& msg)
+bool FlightControl::applyPositionControlSetpoint(const PositionControlSetpoint &setpoint)
+{
+  if (!position_controller_.configured()) return false;
+  position_controller_.setSetpoint(setpoint, nowMillis_());
+  return true;
+}
+
+void FlightControl::applyPositionControlRcInput(const PositionControlRcInput &input)
+{
+  position_controller_.setRcInput(input, nowMillis_());
+}
+
+void FlightControl::setPositionControlEnabled(bool enabled)
+{
+  if (start_control_flag_) return;
+  position_controller_.setEnabled(enabled);
+}
+
+bool FlightControl::positionControlStateValid() const
+{
+  return estimator_ != nullptr && estimator_->positionControlStateValid();
+}
+
+bool FlightControl::positionControlReady() const
+{
+  return estimator_ != nullptr &&
+         position_controller_.ready(estimator_->outputState(), estimator_->stateValidity(), nowMillis_());
+}
+
+bool FlightControl::applyRpyGains(const FlightControlRpyTerms &gains) { return att_controller_.applyRpyGains(gains); }
+
+bool FlightControl::applyPMatrixInertia(const FlightControlPMatrixPseudoInverseWithInertia &msg)
 {
   return att_controller_.applyPMatrixInertia(msg);
 }
 
-bool FlightControl::applyTorqueAllocationMatrixInv(const FlightControlTorqueAllocationMatrixInv& msg)
+bool FlightControl::applyTorqueAllocationMatrixInv(const FlightControlTorqueAllocationMatrixInv &msg)
 {
   return att_controller_.applyTorqueAllocationMatrixInv(msg);
 }
 
-void FlightControl::applyOffsetRotation(const FlightControlDesireCoord& msg)
+void FlightControl::applyOffsetRotation(const FlightControlDesireCoord &msg)
 {
   att_controller_.applyOffsetRotation(msg);
 }
 
-void FlightControl::setAttitudeControlFlag(bool flag)
-{
-  att_controller_.setAttitudeControlFlag(flag);
-}
+void FlightControl::setAttitudeControlFlag(bool flag) { att_controller_.setAttitudeControlFlag(flag); }
 
-bool FlightControl::consumeConfigAck(uint8_t& ack)
+bool FlightControl::consumeConfigAck(uint8_t &ack)
 {
   if (!config_ack_pending_) return false;
   ack = config_ack_;
@@ -181,9 +249,10 @@ void FlightControl::configureMotorCount_()
 {
   if (physical_motor_count_ == 0) return;
 
-  uint16_t allocation_count =
-    static_cast<uint16_t>(physical_motor_count_) * static_cast<uint16_t>(att_controller_.getRotorCoef());
-  if (allocation_count > MAX_FLIGHT_CONTROL_MOTOR_NUM) {
+  uint16_t allocation_count = static_cast<uint16_t>(physical_motor_count_) *
+                              static_cast<uint16_t>(att_controller_.getRotorCoef());
+  if (allocation_count > MAX_FLIGHT_CONTROL_MOTOR_NUM)
+  {
     allocation_count = MAX_FLIGHT_CONTROL_MOTOR_NUM;
   }
 
@@ -205,30 +274,45 @@ void FlightControl::applyGimbalOutput_()
   if (gimbal_dof == 0) return;
 
   const uint16_t thruster_count = att_controller_.getThrusterCount();
-  const float* target_gimbal_angles = att_controller_.getTargetGimbalAngles();
+  const float *target_gimbal_angles = att_controller_.getTargetGimbalAngles();
 
   std::map<uint8_t, float> gimbal_map;
 
-  if (gimbal_dof == 2) {
-    for (uint16_t i = 0; i < thruster_count; ++i) {
-      gimbal_map[static_cast<uint8_t>(2 * i)] =
-        start_control_flag_ ? target_gimbal_angles[2 * i] : 0.0f;
-      gimbal_map[static_cast<uint8_t>(2 * i + 1)] =
-        start_control_flag_ ? target_gimbal_angles[2 * i + 1] : 0.0f;
+  if (gimbal_dof == 2)
+  {
+    for (uint16_t i = 0; i < thruster_count; ++i)
+    {
+      gimbal_map[static_cast<uint8_t>(2 * i)] = start_control_flag_ ? target_gimbal_angles[2 * i] : 0.0f;
+      gimbal_map[static_cast<uint8_t>(2 * i + 1)] = start_control_flag_ ? target_gimbal_angles[2 * i + 1] : 0.0f;
     }
-  } else if (gimbal_dof == 1) {
-    for (uint16_t i = 0; i < thruster_count; ++i) {
-      gimbal_map[static_cast<uint8_t>(i)] =
-        start_control_flag_ ? target_gimbal_angles[i] : 0.0f;
+  }
+  else if (gimbal_dof == 1)
+  {
+    for (uint16_t i = 0; i < thruster_count; ++i)
+    {
+      gimbal_map[static_cast<uint8_t>(i)] = start_control_flag_ ? target_gimbal_angles[i] : 0.0f;
     }
   }
 
   if (gimbal_map.empty()) return;
 
-  if (start_control_flag_) {
+  if (start_control_flag_)
+  {
     servo_->setGoalAngle(gimbal_map, ValueType::RADIAN);
-  } else {
+  }
+  else
+  {
     servo_->torqueEnable(gimbal_map);
   }
+#endif
+}
+
+uint32_t FlightControl::nowMillis_()
+{
+#ifdef SIMULATION
+  const auto now = std::chrono::steady_clock::now().time_since_epoch();
+  return static_cast<uint32_t>(std::chrono::duration_cast<std::chrono::milliseconds>(now).count());
+#else
+  return HAL_GetTick();
 #endif
 }

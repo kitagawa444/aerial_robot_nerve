@@ -14,6 +14,8 @@
 #include <spinal_msgs/msg/flight_config_cmd.hpp>
 #include <spinal_msgs/msg/four_axis_command.hpp>
 #include <spinal_msgs/msg/p_matrix_pseudo_inverse_with_inertia.hpp>
+#include <spinal_msgs/msg/position_control_config.hpp>
+#include <spinal_msgs/msg/position_control_setpoint.hpp>
 #include <spinal_msgs/msg/roll_pitch_yaw_term.hpp>
 #include <spinal_msgs/msg/roll_pitch_yaw_terms.hpp>
 #include <spinal_msgs/msg/torque_allocation_matrix_inv.hpp>
@@ -34,12 +36,10 @@ public:
   FlightControlRosModule() = default;
   ~FlightControlRosModule() = default;
 
-  void init(
-    const std::shared_ptr<rclcpp_lifecycle::LifecycleNode>& node,
-    StateEstimate* estimator,
-    ThrusterManager* thruster);
+  void init(const std::shared_ptr<rclcpp_lifecycle::LifecycleNode> &node, StateEstimate *estimator,
+            ThrusterManager *thruster);
 
-  FlightControl* getFlightControlCore() { return &flight_control_; }
+  FlightControl *getFlightControlCore() { return &flight_control_; }
 
   void activate();
   void deactivate();
@@ -50,8 +50,8 @@ private:
   std::shared_ptr<rclcpp_lifecycle::LifecycleNode> node_;
   FlightControl flight_control_;
   CrsfRosModuleSim crsf_ros_module_;
-  ThrusterManager* thruster_{nullptr};
-  bool initialized_{false};
+  ThrusterManager *thruster_{ nullptr };
+  bool initialized_{ false };
 
   rclcpp::Subscription<spinal_msgs::msg::FlightConfigCmd>::SharedPtr flight_config_sub_;
   rclcpp::Subscription<spinal_msgs::msg::UavInfo>::SharedPtr uav_info_sub_;
@@ -62,6 +62,8 @@ private:
   rclcpp::Subscription<spinal_msgs::msg::TorqueAllocationMatrixInv>::SharedPtr torque_allocation_sub_;
   rclcpp::Subscription<spinal_msgs::msg::DesireCoord>::SharedPtr offset_rot_sub_;
   rclcpp::Subscription<std_msgs::msg::Float32>::SharedPtr sim_voltage_sub_;
+  rclcpp::Subscription<spinal_msgs::msg::PositionControlConfig>::SharedPtr position_config_sub_;
+  rclcpp::Subscription<spinal_msgs::msg::PositionControlSetpoint>::SharedPtr position_setpoint_sub_;
 
   rclcpp_lifecycle::LifecyclePublisher<std_msgs::msg::UInt8>::SharedPtr config_ack_pub_;
   rclcpp_lifecycle::LifecyclePublisher<spinal_msgs::msg::RollPitchYawTerms>::SharedPtr control_term_pub_;
@@ -70,6 +72,7 @@ private:
   rclcpp_lifecycle::LifecyclePublisher<sensor_msgs::msg::JointState>::SharedPtr gimbal_control_pub_;
 
   rclcpp::Service<std_srvs::srv::SetBool>::SharedPtr att_control_srv_;
+  rclcpp::Service<std_srvs::srv::SetBool>::SharedPtr position_control_srv_;
 
   void configureRosIo_();
   void flightConfigCallback_(const spinal_msgs::msg::FlightConfigCmd::SharedPtr msg);
@@ -81,9 +84,12 @@ private:
   void torqueAllocationCallback_(const spinal_msgs::msg::TorqueAllocationMatrixInv::SharedPtr msg);
   void offsetRotCallback_(const spinal_msgs::msg::DesireCoord::SharedPtr msg);
   void simVoltageCallback_(const std_msgs::msg::Float32::SharedPtr msg);
-  void attitudeControlCallback_(
-    const std::shared_ptr<std_srvs::srv::SetBool::Request> req,
-    std::shared_ptr<std_srvs::srv::SetBool::Response> res);
+  void positionConfigCallback_(const spinal_msgs::msg::PositionControlConfig::SharedPtr msg);
+  void positionSetpointCallback_(const spinal_msgs::msg::PositionControlSetpoint::SharedPtr msg);
+  void attitudeControlCallback_(const std::shared_ptr<std_srvs::srv::SetBool::Request> req,
+                                std::shared_ptr<std_srvs::srv::SetBool::Response> res);
+  void positionControlCallback_(const std::shared_ptr<std_srvs::srv::SetBool::Request> req,
+                                std::shared_ptr<std_srvs::srv::SetBool::Response> res);
 };
 
-#endif // SIMULATION
+#endif  // SIMULATION
