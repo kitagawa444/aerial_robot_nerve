@@ -41,6 +41,8 @@ rosidl_generate_interfaces(${PROJECT_NAME}
   "msg/JointProfiles.msg"
   "msg/ExternalStateMeasurement.msg"
   "msg/StateEstimate.msg"
+  "msg/PositionControlConfig.msg"
+  "msg/PositionControlSetpoint.msg"
   "srv/GetBoardInfo.srv"
   "srv/SetBoardConfig.srv"
   "srv/SetAttitudeGains.srv"

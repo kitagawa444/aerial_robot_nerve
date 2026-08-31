@@ -41,6 +41,7 @@ add_library(spinal_flight_control
   ${SPINAL_DIRS}/rc/simulation/crsf_ros_module.cpp
   ${SPINAL_DIRS}/flight_control/flight_control.cpp
   ${SPINAL_DIRS}/flight_control/attitude/attitude_control.cpp
+  ${SPINAL_DIRS}/flight_control/position/position_control.cpp
   ${SPINAL_DIRS}/flight_control/simulation/flight_control_ros_module.cpp
   ${SPINAL_DIRS}/thruster/simulation/thruster_manager.cpp
   ${SPINAL_DIRS}/thruster/simulation/thruster_ros_module.cpp
@@ -154,6 +155,15 @@ if(BUILD_TESTING)
     test/state_estimate_test.cpp
   )
   target_link_libraries(state_estimate_test spinal_flight_control)
+  ament_add_gtest(position_control_test
+    test/position_control_test.cpp
+    ${SPINAL_DIRS}/flight_control/position/position_control.cpp
+  )
+  target_link_libraries(position_control_test spinal_state_estimation)
+  ament_add_gtest(attitude_control_test
+    test/attitude_control_test.cpp
+  )
+  target_link_libraries(attitude_control_test spinal_flight_control)
 endif()
 
 install(PROGRAMS

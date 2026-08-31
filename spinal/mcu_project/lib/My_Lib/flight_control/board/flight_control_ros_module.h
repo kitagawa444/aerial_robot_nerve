@@ -11,8 +11,10 @@
 #include <spinal_msgs/msg/desire_coord.h>
 #include <spinal_msgs/msg/flight_config_cmd.h>
 #include <spinal_msgs/msg/four_axis_command.h>
-#include <spinal_msgs/msg/p_matrix_pseudo_inverse_with_inertia.h>
 #include <spinal_msgs/msg/p_matrix_pseudo_inverse_unit.h>
+#include <spinal_msgs/msg/p_matrix_pseudo_inverse_with_inertia.h>
+#include <spinal_msgs/msg/position_control_config.h>
+#include <spinal_msgs/msg/position_control_setpoint.h>
 #include <spinal_msgs/msg/roll_pitch_yaw_term.h>
 #include <spinal_msgs/msg/roll_pitch_yaw_terms.h>
 #include <spinal_msgs/msg/torque_allocation_matrix_inv.h>
@@ -30,23 +32,16 @@ class FlightControlRosModule final : public RosModuleBase
 {
 public:
   FlightControlRosModule()
-  : RosModuleBase(
-      RosModuleEntityCapacity()
-        .max_subscriptions(8)
-        .max_publishers(3)
-        .max_services(1)
-        .max_timers(0))
-  {}
+    : RosModuleBase(RosModuleEntityCapacity().max_subscriptions(10).max_publishers(3).max_services(2).max_timers(0))
+  {
+  }
 
-  void init_hw(
-    StateEstimate* estimator,
-    ThrusterManager* thruster,
-    DirectServo* servo = nullptr,
-    osMutexId* control_mutex = nullptr);
+  void init_hw(StateEstimate *estimator, ThrusterManager *thruster, DirectServo *servo = nullptr,
+               osMutexId *control_mutex = nullptr);
 
-  FlightControl* getFlightControlCore() { return &flight_control_; }
+  FlightControl *getFlightControlCore() { return &flight_control_; }
 
-  void create_entities(rcl_node_t& node) override;
+  void create_entities(rcl_node_t &node) override;
   void update() override;
   void publish() override;
 
@@ -57,7 +52,7 @@ private:
   static constexpr size_t MAX_TORQUE_ALLOC_SIZE = MAX_FLIGHT_CONTROL_MOTOR_NUM;
 
   FlightControl flight_control_;
-  osMutexId* control_mutex_{nullptr};
+  osMutexId *control_mutex_{ nullptr };
 
   rcl_subscription_t flight_config_sub_{};
   rcl_subscription_t uav_info_sub_{};
@@ -67,12 +62,15 @@ private:
   rcl_subscription_t p_matrix_sub_{};
   rcl_subscription_t torque_allocation_sub_{};
   rcl_subscription_t offset_rot_sub_{};
+  rcl_subscription_t position_config_sub_{};
+  rcl_subscription_t position_setpoint_sub_{};
 
   rcl_publisher_t config_ack_pub_{};
   rcl_publisher_t control_term_pub_{};
   rcl_publisher_t control_feedback_state_pub_{};
 
   rcl_service_t att_control_srv_{};
+  rcl_service_t position_control_srv_{};
 
   spinal_msgs__msg__FlightConfigCmd flight_config_msg_{};
   spinal_msgs__msg__UavInfo uav_info_msg_{};
@@ -91,6 +89,16 @@ private:
   spinal_msgs__msg__Vector3Int16 torque_allocation_buf_[MAX_TORQUE_ALLOC_SIZE]{};
 
   spinal_msgs__msg__DesireCoord offset_rot_msg_{};
+  spinal_msgs__msg__PositionControlConfig position_config_msg_{};
+  float position_thrust_conversion_buf_[MAX_FLIGHT_CONTROL_MOTOR_NUM]{};
+  float position_yaw_acceleration_conversion_buf_[MAX_FLIGHT_CONTROL_MOTOR_NUM]{};
+  float position_z_p_gain_buf_[MAX_FLIGHT_CONTROL_MOTOR_NUM]{};
+  float position_z_i_gain_buf_[MAX_FLIGHT_CONTROL_MOTOR_NUM]{};
+  float position_z_d_gain_buf_[MAX_FLIGHT_CONTROL_MOTOR_NUM]{};
+  float position_yaw_p_gain_buf_[MAX_FLIGHT_CONTROL_MOTOR_NUM]{};
+  float position_yaw_i_gain_buf_[MAX_FLIGHT_CONTROL_MOTOR_NUM]{};
+  float position_yaw_d_gain_buf_[MAX_FLIGHT_CONTROL_MOTOR_NUM]{};
+  spinal_msgs__msg__PositionControlSetpoint position_setpoint_msg_{};
 
   std_msgs__msg__UInt8 config_ack_msg_{};
   spinal_msgs__msg__RollPitchYawTerms control_term_msg_{};
@@ -99,24 +107,29 @@ private:
 
   std_srvs__srv__SetBool_Request att_control_req_{};
   std_srvs__srv__SetBool_Response att_control_res_{};
+  std_srvs__srv__SetBool_Request position_control_req_{};
+  std_srvs__srv__SetBool_Response position_control_res_{};
 
   void configure_message_storage_();
-  void fillControlTerms_(const FlightControlRpyTerms& src);
-  void fillControlFeedback_(const FlightControlRpyTerm& src);
+  void fillControlTerms_(const FlightControlRpyTerms &src);
+  void fillControlFeedback_(const FlightControlRpyTerm &src);
 
   void lock_control_();
   void unlock_control_();
 
-  static FlightControlRosModule* instance_;
-  static void flightConfigCallbackStatic_(const void* msgin);
-  static void uavInfoCallbackStatic_(const void* msgin);
-  static void gimbalDofCallbackStatic_(const void* msgin);
-  static void fourAxisCommandCallbackStatic_(const void* msgin);
-  static void rpyGainCallbackStatic_(const void* msgin);
-  static void pMatrixCallbackStatic_(const void* msgin);
-  static void torqueAllocationCallbackStatic_(const void* msgin);
-  static void offsetRotCallbackStatic_(const void* msgin);
-  static void attitudeControlCallbackStatic_(const void* req_msg, void* res_msg);
+  static FlightControlRosModule *instance_;
+  static void flightConfigCallbackStatic_(const void *msgin);
+  static void uavInfoCallbackStatic_(const void *msgin);
+  static void gimbalDofCallbackStatic_(const void *msgin);
+  static void fourAxisCommandCallbackStatic_(const void *msgin);
+  static void rpyGainCallbackStatic_(const void *msgin);
+  static void pMatrixCallbackStatic_(const void *msgin);
+  static void torqueAllocationCallbackStatic_(const void *msgin);
+  static void offsetRotCallbackStatic_(const void *msgin);
+  static void positionConfigCallbackStatic_(const void *msgin);
+  static void positionSetpointCallbackStatic_(const void *msgin);
+  static void attitudeControlCallbackStatic_(const void *req_msg, void *res_msg);
+  static void positionControlCallbackStatic_(const void *req_msg, void *res_msg);
 };
 
-#endif // !SIMULATION
+#endif  // !SIMULATION

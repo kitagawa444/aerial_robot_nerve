@@ -77,6 +77,8 @@ const std::vector<std::string> kDefaultNamespaceToRootTopics = {
   "baro_config_cmd:std_msgs/msg/UInt8",
   "set_adc_scale:std_msgs/msg/Float32",
   "external_state_measurement:spinal_msgs/msg/ExternalStateMeasurement",
+  "position_control/config:spinal_msgs/msg/PositionControlConfig",
+  "position_control/setpoint:spinal_msgs/msg/PositionControlSetpoint",
 };
 }  // namespace
 
