@@ -30,27 +30,30 @@
 #define MADWICK 2
 #define ESTIMATE_TYPE COMPLEMENTARY
 
-class AttitudeEstimate {
- public:
+class AttitudeEstimate
+{
+public:
 #ifdef SIMULATION
-  AttitudeEstimate()
-    : acc_(0, 0, 9.8), mag_(1, 0, 0), gyro_(0, 0, 0) {}
+  AttitudeEstimate() : acc_(0, 0, 9.8), mag_(1, 0, 0), gyro_(0, 0, 0) {}
 #else
   AttitudeEstimate() = default;
 #endif
 
-  ~AttitudeEstimate() {
-    if (estimator_) {
+  ~AttitudeEstimate()
+  {
+    if (estimator_)
+    {
       delete estimator_;
       estimator_ = nullptr;
     }
   }
 
-  AttitudeEstimate(const AttitudeEstimate&) = delete;
-  AttitudeEstimate& operator=(const AttitudeEstimate&) = delete;
+  AttitudeEstimate(const AttitudeEstimate &) = delete;
+  AttitudeEstimate &operator=(const AttitudeEstimate &) = delete;
 
 #ifndef SIMULATION
-  void init(IMU* imu, GPS* gps) {
+  void init(IMU *imu, GPS *gps)
+  {
     imu_ = imu;
     gps_ = gps;
     updated_ = false;
@@ -64,24 +67,29 @@ class AttitudeEstimate {
 #endif
   }
 
-  void update() {
+  void update()
+  {
     if (!imu_ || !estimator_) return;
 
     // Update magnetic declination from GPS once (same behavior as original)
-    if (gps_) {
-      if (gps_->getMagValid() && !estimator_->getMagDecValid()) {
+    if (gps_)
+    {
+      if (gps_->getMagValid() && !estimator_->getMagDecValid())
+      {
         estimator_->setMagDeclination(gps_->getMagDeclination());
       }
     }
 
-    if (imu_->getUpdate()) {
+    if (imu_->getUpdate())
+    {
       estimator_->update(imu_->getGyro(), imu_->getAcc(), imu_->getMag());
       imu_->setUpdate(false);
       updated_ = true;
     }
   }
 #else
-  void init() {
+  void init()
+  {
     updated_ = false;
 
 #if ESTIMATE_TYPE == COMPLEMENTARY
@@ -93,59 +101,85 @@ class AttitudeEstimate {
 #endif
   }
 
-  void update() {
+  void update()
+  {
     if (!estimator_) return;
     estimator_->update(gyro_, acc_, mag_);
     updated_ = true;
   }
 
   // simulation setters
-  void setMag(float x, float y, float z) { mag_.x = x; mag_.y = y; mag_.z = z; }
-  void setGyro(float x, float y, float z) { gyro_.x = x; gyro_.y = y; gyro_.z = z; }
-  void setAcc(float x, float y, float z) { acc_.x = x; acc_.y = y; acc_.z = z; }
+  void setMag(float x, float y, float z)
+  {
+    mag_.x = x;
+    mag_.y = y;
+    mag_.z = z;
+  }
+  void setGyro(float x, float y, float z)
+  {
+    gyro_.x = x;
+    gyro_.y = y;
+    gyro_.z = z;
+  }
+  void setAcc(float x, float y, float z)
+  {
+    acc_.x = x;
+    acc_.y = y;
+    acc_.z = z;
+  }
 #endif
 
-  bool consumeUpdated() {
+  bool consumeUpdated()
+  {
     const bool was = updated_;
     updated_ = false;
     return was;
   }
 
   // --------- Outputs (used by StateEstimate for publishing / services) ----------
-  ap::Vector3f getMagVec() const { return estimator_->getMag(); }
-  ap::Vector3f getAccVec() const { return estimator_->getAcc(); }
-  ap::Vector3f getGyroVec() const { return estimator_->getAngular(); }
-  ap::Quaternion getQuaternion() const { return estimator_->getQuaternion(); }
+  ap::Vector3f getMagVec() const { return estimator_ != nullptr ? estimator_->getMag() : ap::Vector3f(); }
+  ap::Vector3f getAccVec() const { return estimator_ != nullptr ? estimator_->getAcc() : ap::Vector3f(); }
+  ap::Vector3f getGyroVec() const { return estimator_ != nullptr ? estimator_->getAngular() : ap::Vector3f(); }
+  ap::Quaternion getQuaternion() const
+  {
+    if (estimator_ != nullptr) return estimator_->getQuaternion();
+    ap::Quaternion quaternion;
+    quaternion.initialise();
+    return quaternion;
+  }
 
 #ifndef SIMULATION
   float getMagDeclination() const { return estimator_->getMagDeclination(); }
   void setMagDeclination(float v) { estimator_->setMagDeclination(v); }
 #endif
-  EstimatorAlgorithm* getEstimator() { return estimator_; }  // optional
+  EstimatorAlgorithm *getEstimator() { return estimator_; }  // optional
 
   // Ground truth passthrough (ROS-independent)
-  const ap::Matrix3f getRotation() {
+  const ap::Matrix3f getRotation()
+  {
     if (!use_ground_truth_) return estimator_->getRotation();
     return ground_truth_rot_;
   }
 
-  const ap::Vector3f getAngular() {
+  const ap::Vector3f getAngular()
+  {
     if (!use_ground_truth_) return estimator_->getAngular();
     return ground_truth_ang_vel_;
   }
 
   inline void useGroundTruth(bool flag) { use_ground_truth_ = flag; }
-  void setGroundTruthStates(ap::Matrix3f rot, ap::Vector3f ang_vel) {
+  void setGroundTruthStates(ap::Matrix3f rot, ap::Vector3f ang_vel)
+  {
     ground_truth_rot_ = rot;
     ground_truth_ang_vel_ = ang_vel;
   }
 
- private:
-  EstimatorAlgorithm* estimator_ = nullptr;
+private:
+  EstimatorAlgorithm *estimator_ = nullptr;
 
 #ifndef SIMULATION
-  IMU* imu_ = nullptr;
-  GPS* gps_ = nullptr;
+  IMU *imu_ = nullptr;
+  GPS *gps_ = nullptr;
 #else
   ap::Vector3f acc_, mag_, gyro_;
 #endif

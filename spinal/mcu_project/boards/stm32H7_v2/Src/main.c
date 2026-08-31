@@ -402,16 +402,16 @@ int main(void)
   gps_ros_mod_.init_hw(&huart3, LED2_GPIO_Port, LED2_Pin);
   ros_mgr_.add(&gps_ros_mod_);
   estimator_ros_mod_.init_hw(
-    &imu_, baro_ros_mod_.getBaroHw(), gps_ros_mod_.getGpsHw());
+    &imu_, baro_ros_mod_.getBaroHw(), gps_ros_mod_.getGpsHw(), &flightControlMutexHandle);
 #elif CRSF_RC_INPUT
   crsf_ros_mod_.init_hw(
     &huart3,
     flight_control_ros_mod_.getFlightControlCore(),
     &flightControlMutexHandle);
   ros_mgr_.add(&crsf_ros_mod_);
-  estimator_ros_mod_.init_hw(&imu_, baro_ros_mod_.getBaroHw(), nullptr);
+  estimator_ros_mod_.init_hw(&imu_, baro_ros_mod_.getBaroHw(), nullptr, &flightControlMutexHandle);
 #else
-  estimator_ros_mod_.init_hw(&imu_, baro_ros_mod_.getBaroHw(), nullptr);
+  estimator_ros_mod_.init_hw(&imu_, baro_ros_mod_.getBaroHw(), nullptr, &flightControlMutexHandle);
 #endif
   ros_mgr_.add(&estimator_ros_mod_);
 

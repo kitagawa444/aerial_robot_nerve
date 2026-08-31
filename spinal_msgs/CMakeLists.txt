@@ -39,6 +39,8 @@ rosidl_generate_interfaces(${PROJECT_NAME}
   "msg/ESCTelemetryArray.msg"
   "msg/JointProfile.msg"
   "msg/JointProfiles.msg"
+  "msg/ExternalStateMeasurement.msg"
+  "msg/StateEstimate.msg"
   "srv/GetBoardInfo.srv"
   "srv/SetBoardConfig.srv"
   "srv/SetAttitudeGains.srv"

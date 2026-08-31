@@ -26,9 +26,11 @@
 #define DELTA_T 0.001f
 #endif
 
-class EstimatorAlgorithm {
- public:
-  EstimatorAlgorithm() : acc_(), gyro_(), mag_(), est_g_(), est_m_(), mag_dec_valid_(false) {
+class EstimatorAlgorithm
+{
+public:
+  EstimatorAlgorithm() : acc_(), gyro_(), mag_(), est_g_(), est_m_(), mag_dec_valid_(false)
+  {
     rot_.identity();
     mag_declination_ = 0;
 
@@ -43,7 +45,8 @@ class EstimatorAlgorithm {
 
   virtual ~EstimatorAlgorithm() {}
 
-  void update(const ap::Vector3f& gyro, const ap::Vector3f& acc, const ap::Vector3f& mag) {
+  void update(const ap::Vector3f &gyro, const ap::Vector3f &acc, const ap::Vector3f &mag)
+  {
     /* the sensor data in body frame */
     acc_ = acc;
     gyro_ = gyro;
@@ -52,11 +55,16 @@ class EstimatorAlgorithm {
     estimation();
   }
 
-  virtual void estimation() {
+  virtual void estimation()
+  {
 #ifdef SIMULATION
-    if (prev_time < 0) {
+    if (prev_time < 0)
+    {
       DELTA_T = 0;
-    } else {
+      prev_time = rclcpp::Clock().now().seconds();
+    }
+    else
+    {
       double now = rclcpp::Clock().now().seconds();
       DELTA_T = static_cast<float>(now - prev_time);
       prev_time = now;
@@ -75,7 +83,7 @@ class EstimatorAlgorithm {
 
 #ifndef SIMULATION
   bool getMagDecValid() { return mag_dec_valid_; }
-  float getMagDeclination() { return mag_declination_;}
+  float getMagDeclination() { return mag_declination_; }
   void setMagDeclination(float mag_dec)
   {
     mag_declination_ = mag_dec;
@@ -85,7 +93,7 @@ class EstimatorAlgorithm {
   }
 #endif
 
- protected:
+protected:
   ap::Vector3f acc_, gyro_, mag_;
   ap::Vector3f est_g_; /* estimated vetor of gravity */
   ap::Vector3f est_m_; /* estimated vetor of magnet */

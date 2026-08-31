@@ -57,6 +57,7 @@ target_include_directories(spinal_flight_control
 target_link_libraries(spinal_flight_control
   PUBLIC
   spinal_math
+  spinal_state_estimation
 )
 
 ament_target_dependencies(spinal_flight_control
@@ -69,16 +70,19 @@ ament_target_dependencies(spinal_flight_control
   std_srvs
 )
 
-add_library(spinal_state_estimation INTERFACE)
+add_library(spinal_state_estimation
+  ${SPINAL_DIRS}/state_estimate/eskf/eskf15.cpp
+)
 
 target_include_directories(spinal_state_estimation
-  INTERFACE
+  PUBLIC
   $<BUILD_INTERFACE:${SPINAL_DIRS}>
   $<INSTALL_INTERFACE:include/My_Lib>
 )
 
 target_link_libraries(spinal_state_estimation
-  INTERFACE
+  PUBLIC
+  spinal_math
   rclcpp::rclcpp
   rclcpp_lifecycle::rclcpp_lifecycle
 )
@@ -142,6 +146,14 @@ if(BUILD_TESTING)
     ${SPINAL_DIRS}/rc/crsf_teleop.cpp
   )
   target_include_directories(crsf_teleop_test PRIVATE ${SPINAL_DIRS})
+  ament_add_gtest(eskf15_test
+    test/eskf15_test.cpp
+  )
+  target_link_libraries(eskf15_test spinal_state_estimation)
+  ament_add_gtest(state_estimate_test
+    test/state_estimate_test.cpp
+  )
+  target_link_libraries(state_estimate_test spinal_flight_control)
 endif()
 
 install(PROGRAMS
