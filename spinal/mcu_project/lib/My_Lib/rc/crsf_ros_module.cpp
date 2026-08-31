@@ -2,10 +2,7 @@
 
 #include <rmw_microros/rmw_microros.h>
 
-bool CrsfRosModule::init_hw(
-  UART_HandleTypeDef* huart,
-  FlightControl* flight_control,
-  osMutexId* control_mutex)
+bool CrsfRosModule::init_hw(UART_HandleTypeDef *huart, FlightControl *flight_control, osMutexId *control_mutex)
 {
   flight_control_ = flight_control;
   control_mutex_ = control_mutex;
@@ -22,11 +19,9 @@ void CrsfRosModule::update()
   const uint32_t now_ms = HAL_GetTick();
   if (snapshot.rc_frame_sequence != last_teleop_rc_sequence_)
   {
-    const crsf::TeleopEvents events = teleop_interpreter_.update(
-      snapshot.raw,
-      crsf::CHANNEL_COUNT,
-      snapshot.connected,
-      now_ms);
+    apply_rc_input_(snapshot);
+    const crsf::TeleopEvents events = teleop_interpreter_.update(snapshot.raw, crsf::CHANNEL_COUNT, snapshot.connected,
+                                                                 now_ms);
 
     if (events.arm) apply_direct_command_(FlightControlCommand::ARM_ON_CMD);
     if (events.force_landing)
@@ -41,11 +36,12 @@ void CrsfRosModule::update()
   }
   else if (!snapshot.connected)
   {
+    apply_rc_input_(snapshot);
     (void)teleop_interpreter_.update(nullptr, 0U, false, now_ms);
   }
 }
 
-void CrsfRosModule::create_entities(rcl_node_t& node)
+void CrsfRosModule::create_entities(rcl_node_t &node)
 {
   reserve_entities();
 
@@ -56,29 +52,15 @@ void CrsfRosModule::create_entities(rcl_node_t& node)
   joy_msg_.buttons.size = 0U;
   joy_msg_.buttons.capacity = 0U;
 
-  (void)init_publisher_default(
-    node,
-    joy_pub_,
-    ROSIDL_GET_MSG_TYPE_SUPPORT(sensor_msgs, msg, Joy),
-    "rc/joy");
+  (void)init_publisher_default(node, joy_pub_, ROSIDL_GET_MSG_TYPE_SUPPORT(sensor_msgs, msg, Joy), "rc/joy");
 
-  (void)init_publisher_default(
-    node,
-    connected_pub_,
-    ROSIDL_GET_MSG_TYPE_SUPPORT(std_msgs, msg, Bool),
-    "rc/connected");
+  (void)init_publisher_default(node, connected_pub_, ROSIDL_GET_MSG_TYPE_SUPPORT(std_msgs, msg, Bool), "rc/connected");
 
-  (void)init_publisher_default(
-    node,
-    link_quality_pub_,
-    ROSIDL_GET_MSG_TYPE_SUPPORT(std_msgs, msg, UInt8),
-    "rc/link_quality");
+  (void)init_publisher_default(node, link_quality_pub_, ROSIDL_GET_MSG_TYPE_SUPPORT(std_msgs, msg, UInt8),
+                               "rc/link_quality");
 
-  (void)init_publisher_reliable(
-    node,
-    teleop_command_pub_,
-    ROSIDL_GET_MSG_TYPE_SUPPORT(std_msgs, msg, UInt8),
-    "rc/teleop_command");
+  (void)init_publisher_reliable(node, teleop_command_pub_, ROSIDL_GET_MSG_TYPE_SUPPORT(std_msgs, msg, UInt8),
+                                "rc/teleop_command");
 
   last_joy_publish_ms_ = HAL_GetTick();
   last_status_publish_ms_ = last_joy_publish_ms_;
@@ -98,10 +80,8 @@ void CrsfRosModule::publish()
   }
 
   const uint32_t now_ms = HAL_GetTick();
-  const bool connection_changed =
-    !status_published_ || snapshot.connected != last_published_connected_;
-  const bool status_due =
-    connection_changed || (now_ms - last_status_publish_ms_) >= STATUS_PUBLISH_INTERVAL_MS;
+  const bool connection_changed = !status_published_ || snapshot.connected != last_published_connected_;
+  const bool status_due = connection_changed || (now_ms - last_status_publish_ms_) >= STATUS_PUBLISH_INTERVAL_MS;
 
   if (status_due)
   {
@@ -118,8 +98,7 @@ void CrsfRosModule::publish()
   publish_pending_command_(pending_takeoff_ms_, crsf::TeleopCommand::Takeoff, now_ms);
   publish_pending_command_(pending_land_ms_, crsf::TeleopCommand::Land, now_ms);
 
-  if (!snapshot.connected || !new_rc_frame ||
-      (now_ms - last_joy_publish_ms_) < JOY_PUBLISH_INTERVAL_MS)
+  if (!snapshot.connected || !new_rc_frame || (now_ms - last_joy_publish_ms_) < JOY_PUBLISH_INTERVAL_MS)
   {
     return;
   }
@@ -131,8 +110,7 @@ void CrsfRosModule::publish()
 
   const uint64_t epoch_ms = rmw_uros_epoch_millis();
   joy_msg_.header.stamp.sec = static_cast<int32_t>(epoch_ms / 1000ULL);
-  joy_msg_.header.stamp.nanosec =
-    static_cast<uint32_t>((epoch_ms % 1000ULL) * 1000000ULL);
+  joy_msg_.header.stamp.nanosec = static_cast<uint32_t>((epoch_ms % 1000ULL) * 1000000ULL);
 
   (void)rcl_publish(&joy_pub_, &joy_msg_, nullptr);
   last_published_rc_sequence_ = snapshot.rc_frame_sequence;
@@ -147,18 +125,28 @@ void CrsfRosModule::apply_direct_command_(uint8_t command)
   unlock_control_();
 }
 
-void CrsfRosModule::queue_ros_command_(
-  std::atomic<uint32_t>& pending_stamp,
-  uint32_t now_ms)
+void CrsfRosModule::apply_rc_input_(const CrsfReceiver::Snapshot &snapshot)
+{
+  if (flight_control_ == nullptr) return;
+  PositionControlRcInput input;
+  input.lateral = snapshot.normalized[0];
+  input.forward = snapshot.normalized[1];
+  input.vertical = snapshot.normalized[2];
+  input.yaw = snapshot.normalized[3];
+  input.connected = snapshot.connected;
+  lock_control_();
+  flight_control_->applyPositionControlRcInput(input);
+  unlock_control_();
+}
+
+void CrsfRosModule::queue_ros_command_(std::atomic<uint32_t> &pending_stamp, uint32_t now_ms)
 {
   if (ros_ready_ == nullptr || !ros_ready_->load(std::memory_order_acquire)) return;
   pending_stamp.store(now_ms == 0U ? 1U : now_ms, std::memory_order_release);
 }
 
-void CrsfRosModule::publish_pending_command_(
-  std::atomic<uint32_t>& pending_stamp,
-  crsf::TeleopCommand command,
-  uint32_t now_ms)
+void CrsfRosModule::publish_pending_command_(std::atomic<uint32_t> &pending_stamp, crsf::TeleopCommand command,
+                                             uint32_t now_ms)
 {
   const uint32_t stamp = pending_stamp.exchange(0U, std::memory_order_acq_rel);
   if (stamp == 0U || static_cast<uint32_t>(now_ms - stamp) > ROS_COMMAND_MAX_AGE_MS) return;
