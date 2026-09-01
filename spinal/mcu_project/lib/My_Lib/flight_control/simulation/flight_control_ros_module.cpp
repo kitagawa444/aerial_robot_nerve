@@ -2,6 +2,8 @@
 
 #include "flight_control/simulation/flight_control_ros_module.h"
 
+#include "flight_control/flight_control_ros_adapter.h"
+
 #include <algorithm>
 #include <functional>
 
@@ -9,8 +11,10 @@ void FlightControlRosModule::init(const std::shared_ptr<rclcpp_lifecycle::Lifecy
                                   StateEstimate *estimator, ThrusterManager *thruster)
 {
   node_ = node;
+  last_flight_status_publish_time_ = node_->now();
   thruster_ = thruster;
   flight_control_.init(estimator, thruster, nullptr);
+  flight_control_.setRosLinkState(FlightLinkState::CONNECTING);
 
   if (!node_->has_parameter("rc_serial_port"))
   {
@@ -35,6 +39,8 @@ void FlightControlRosModule::init(const std::shared_ptr<rclcpp_lifecycle::Lifecy
 
 void FlightControlRosModule::update()
 {
+  const std::lock_guard<std::mutex> lock(control_mutex_);
+  flight_control_.setRosLinkState(FlightLinkState::CONNECTED);
   crsf_ros_module_.update();
   flight_control_.update();
 }
@@ -42,6 +48,7 @@ void FlightControlRosModule::update()
 void FlightControlRosModule::activate()
 {
   if (config_ack_pub_) config_ack_pub_->on_activate();
+  if (flight_status_pub_) flight_status_pub_->on_activate();
   if (control_term_pub_) control_term_pub_->on_activate();
   if (control_feedback_state_pub_) control_feedback_state_pub_->on_activate();
   if (gyro_moment_pub_) gyro_moment_pub_->on_activate();
@@ -50,7 +57,12 @@ void FlightControlRosModule::activate()
 
 void FlightControlRosModule::deactivate()
 {
+  {
+    const std::lock_guard<std::mutex> lock(control_mutex_);
+    flight_control_.setRosLinkState(FlightLinkState::DISCONNECTED);
+  }
   if (config_ack_pub_) config_ack_pub_->on_deactivate();
+  if (flight_status_pub_) flight_status_pub_->on_deactivate();
   if (control_term_pub_) control_term_pub_->on_deactivate();
   if (control_feedback_state_pub_) control_feedback_state_pub_->on_deactivate();
   if (gyro_moment_pub_) gyro_moment_pub_->on_deactivate();
@@ -60,6 +72,7 @@ void FlightControlRosModule::deactivate()
 void FlightControlRosModule::publish()
 {
   if (!node_) return;
+  const std::lock_guard<std::mutex> lock(control_mutex_);
 
   uint8_t ack = 0;
   if (flight_control_.consumeConfigAck(ack) && config_ack_pub_)
@@ -69,6 +82,19 @@ void FlightControlRosModule::publish()
     config_ack_pub_->publish(msg);
   }
 
+  const FlightSupervisorStatus &status = flight_control_.getSupervisor().status();
+  const rclcpp::Time now = node_->now();
+  if (flight_status_pub_ &&
+      (status.sequence != last_flight_status_sequence_ || (now - last_flight_status_publish_time_).seconds() >= 0.1))
+  {
+    spinal_msgs::msg::FlightStatus msg;
+    msg.stamp = now;
+    flight_control_ros::fillFlightStatus(msg, status);
+    flight_status_pub_->publish(msg);
+    last_flight_status_sequence_ = status.sequence;
+    last_flight_status_publish_time_ = now;
+  }
+
   AttitudeController &att = flight_control_.getAttitudeController();
   if (att.getUavModel() == FlightControlUavModel::DRAGON)
   {
@@ -76,13 +102,7 @@ void FlightControlRosModule::publish()
     {
       const FlightControlRpyTerm &src = att.getControlFeedbackState();
       spinal_msgs::msg::RollPitchYawTerm msg;
-      msg.roll_p = src.roll_p;
-      msg.roll_i = src.roll_i;
-      msg.roll_d = src.roll_d;
-      msg.pitch_p = src.pitch_p;
-      msg.pitch_i = src.pitch_i;
-      msg.pitch_d = src.pitch_d;
-      msg.yaw_d = src.yaw_d;
+      flight_control_ros::fillRollPitchYawTerm(msg, src);
       control_feedback_state_pub_->publish(msg);
     }
   }
@@ -94,13 +114,7 @@ void FlightControlRosModule::publish()
     msg.motors.resize(n);
     for (size_t i = 0; i < n; ++i)
     {
-      msg.motors[i].roll_p = src.motors[i].roll_p;
-      msg.motors[i].roll_i = src.motors[i].roll_i;
-      msg.motors[i].roll_d = src.motors[i].roll_d;
-      msg.motors[i].pitch_p = src.motors[i].pitch_p;
-      msg.motors[i].pitch_i = src.motors[i].pitch_i;
-      msg.motors[i].pitch_d = src.motors[i].pitch_d;
-      msg.motors[i].yaw_d = src.motors[i].yaw_d;
+      flight_control_ros::fillRollPitchYawTerm(msg.motors[i], src.motors[i]);
     }
     control_term_pub_->publish(msg);
   }
@@ -179,11 +193,20 @@ void FlightControlRosModule::configureRosIo_()
       "position_control/config", rclcpp::SystemDefaultsQoS(),
       std::bind(&FlightControlRosModule::positionConfigCallback_, this, std::placeholders::_1));
 
+  health_config_sub_ = node_->create_subscription<spinal_msgs::msg::HealthConfig>(
+      "health/config", rclcpp::SystemDefaultsQoS(),
+      std::bind(&FlightControlRosModule::healthConfigCallback_, this, std::placeholders::_1));
+
   position_setpoint_sub_ = node_->create_subscription<spinal_msgs::msg::PositionControlSetpoint>(
       "position_control/setpoint", rclcpp::SensorDataQoS(),
       std::bind(&FlightControlRosModule::positionSetpointCallback_, this, std::placeholders::_1));
 
+  network_heartbeat_sub_ = node_->create_subscription<std_msgs::msg::Empty>(
+      "network/heartbeat", rclcpp::SystemDefaultsQoS(),
+      std::bind(&FlightControlRosModule::networkHeartbeatCallback_, this, std::placeholders::_1));
+
   config_ack_pub_ = node_->create_publisher<std_msgs::msg::UInt8>("flight_config_ack", rclcpp::QoS(1));
+  flight_status_pub_ = node_->create_publisher<spinal_msgs::msg::FlightStatus>("fc/flight_status", rclcpp::QoS(1));
   control_term_pub_ = node_->create_publisher<spinal_msgs::msg::RollPitchYawTerms>("rpy/pid", rclcpp::QoS(1));
   control_feedback_state_pub_ = node_->create_publisher<spinal_msgs::msg::RollPitchYawTerm>("rpy/feedback_state",
                                                                                             rclcpp::QoS(1));
@@ -203,6 +226,7 @@ void FlightControlRosModule::configureRosIo_()
 void FlightControlRosModule::flightConfigCallback_(const spinal_msgs::msg::FlightConfigCmd::SharedPtr msg)
 {
   if (!msg) return;
+  const std::lock_guard<std::mutex> lock(control_mutex_);
   if (!flight_control_.applyFlightConfig(msg->cmd) && msg->cmd == FlightControlCommand::ARM_ON_CMD)
   {
     const PositionController &position = flight_control_.getPositionController();
@@ -221,191 +245,104 @@ void FlightControlRosModule::flightConfigCallback_(const spinal_msgs::msg::Fligh
 void FlightControlRosModule::uavInfoCallback_(const spinal_msgs::msg::UavInfo::SharedPtr msg)
 {
   if (!msg) return;
+  const std::lock_guard<std::mutex> lock(control_mutex_);
   flight_control_.applyUavInfo(msg->motor_num, static_cast<int8_t>(msg->uav_model));
 }
 
 void FlightControlRosModule::gimbalDofCallback_(const std_msgs::msg::UInt8::SharedPtr msg)
 {
   if (!msg) return;
+  const std::lock_guard<std::mutex> lock(control_mutex_);
   flight_control_.applyGimbalDof(msg->data);
 }
 
 void FlightControlRosModule::fourAxisCommandCallback_(const spinal_msgs::msg::FourAxisCommand::SharedPtr msg)
 {
   if (!msg) return;
-
-  FlightControlFourAxisCommand cmd;
-  cmd.angles[0] = msg->angles[0];
-  cmd.angles[1] = msg->angles[1];
-  cmd.angles[2] = msg->angles[2];
-  cmd.base_thrust_count = std::min(msg->base_thrust.size(), static_cast<size_t>(MAX_FLIGHT_CONTROL_MOTOR_NUM));
-  for (size_t i = 0; i < cmd.base_thrust_count; ++i)
-  {
-    cmd.base_thrust[i] = msg->base_thrust[i];
-  }
-  (void)flight_control_.applyFourAxisCommand(cmd);
+  const std::lock_guard<std::mutex> lock(control_mutex_);
+  (void)flight_control_ros::applyFourAxisCommand(flight_control_, *msg);
 }
 
 void FlightControlRosModule::rpyGainCallback_(const spinal_msgs::msg::RollPitchYawTerms::SharedPtr msg)
 {
   if (!msg) return;
-
-  FlightControlRpyTerms gains;
-  gains.motors_count = std::min(msg->motors.size(), static_cast<size_t>(MAX_FLIGHT_CONTROL_MOTOR_NUM));
-  for (size_t i = 0; i < gains.motors_count; ++i)
+  const std::lock_guard<std::mutex> lock(control_mutex_);
+  if (!flight_control_ros::applyRpyGains(flight_control_, *msg))
   {
-    gains.motors[i].roll_p = msg->motors[i].roll_p;
-    gains.motors[i].roll_i = msg->motors[i].roll_i;
-    gains.motors[i].roll_d = msg->motors[i].roll_d;
-    gains.motors[i].pitch_p = msg->motors[i].pitch_p;
-    gains.motors[i].pitch_i = msg->motors[i].pitch_i;
-    gains.motors[i].pitch_d = msg->motors[i].pitch_d;
-    gains.motors[i].yaw_d = msg->motors[i].yaw_d;
-  }
-  if (!flight_control_.applyRpyGains(gains))
-  {
-    RCLCPP_WARN(node_->get_logger(), "[sim] Rejected RPY gains for %zu motors", gains.motors_count);
+    RCLCPP_WARN(node_->get_logger(), "[sim] Rejected RPY gains for %zu motors", msg->motors.size());
   }
 }
 
 void FlightControlRosModule::pMatrixCallback_(const spinal_msgs::msg::PMatrixPseudoInverseWithInertia::SharedPtr msg)
 {
   if (!msg) return;
-
-  FlightControlPMatrixPseudoInverseWithInertia dst;
-  dst.pseudo_inverse_count = std::min(msg->pseudo_inverse.size(), static_cast<size_t>(MAX_FLIGHT_CONTROL_MOTOR_NUM));
-  for (size_t i = 0; i < dst.pseudo_inverse_count; ++i)
-  {
-    dst.pseudo_inverse[i].r = msg->pseudo_inverse[i].r;
-    dst.pseudo_inverse[i].p = msg->pseudo_inverse[i].p;
-    dst.pseudo_inverse[i].y = msg->pseudo_inverse[i].y;
-  }
-  for (size_t i = 0; i < 6; ++i)
-  {
-    dst.inertia[i] = msg->inertia[i];
-  }
-  (void)flight_control_.applyPMatrixInertia(dst);
+  const std::lock_guard<std::mutex> lock(control_mutex_);
+  (void)flight_control_ros::applyPMatrixInertia(flight_control_, *msg);
 }
 
 void FlightControlRosModule::torqueAllocationCallback_(const spinal_msgs::msg::TorqueAllocationMatrixInv::SharedPtr msg)
 {
   if (!msg) return;
-
-  FlightControlTorqueAllocationMatrixInv dst;
-  dst.rows_count = std::min(msg->rows.size(), static_cast<size_t>(MAX_FLIGHT_CONTROL_MOTOR_NUM));
-  for (size_t i = 0; i < dst.rows_count; ++i)
+  const std::lock_guard<std::mutex> lock(control_mutex_);
+  if (!flight_control_ros::applyTorqueAllocationMatrixInv(flight_control_, *msg))
   {
-    dst.rows[i].x = msg->rows[i].x;
-    dst.rows[i].y = msg->rows[i].y;
-    dst.rows[i].z = msg->rows[i].z;
-  }
-  if (!flight_control_.applyTorqueAllocationMatrixInv(dst))
-  {
-    RCLCPP_WARN(node_->get_logger(), "[sim] Rejected torque allocation for %zu motors", dst.rows_count);
+    RCLCPP_WARN(node_->get_logger(), "[sim] Rejected torque allocation for %zu motors", msg->rows.size());
   }
 }
 
 void FlightControlRosModule::offsetRotCallback_(const spinal_msgs::msg::DesireCoord::SharedPtr msg)
 {
   if (!msg) return;
-
-  FlightControlDesireCoord dst;
-  dst.roll = msg->roll;
-  dst.pitch = msg->pitch;
-  dst.yaw = msg->yaw;
-  flight_control_.applyOffsetRotation(dst);
+  const std::lock_guard<std::mutex> lock(control_mutex_);
+  flight_control_ros::applyOffsetRotation(flight_control_, *msg);
 }
 
 void FlightControlRosModule::simVoltageCallback_(const std_msgs::msg::Float32::SharedPtr msg)
 {
   if (!msg || thruster_ == nullptr) return;
+  const std::lock_guard<std::mutex> lock(control_mutex_);
   thruster_->setSimVoltage(msg->data);
 }
 
 void FlightControlRosModule::positionConfigCallback_(const spinal_msgs::msg::PositionControlConfig::SharedPtr msg)
 {
   if (!msg) return;
-  const size_t motor_count = msg->vertical_acceleration_to_thrust.size();
-  if (msg->use_lqi_gains && (msg->yaw_acceleration_to_thrust.size() != motor_count ||
-                             msg->z_p_gain.size() != motor_count || msg->z_i_gain.size() != motor_count ||
-                             msg->z_d_gain.size() != motor_count || msg->yaw_p_gain.size() != motor_count ||
-                             msg->yaw_i_gain.size() != motor_count || msg->yaw_d_gain.size() != motor_count))
+  const std::lock_guard<std::mutex> lock(control_mutex_);
+  if (!flight_control_ros::applyPositionControlConfig(flight_control_, *msg))
   {
-    RCLCPP_WARN(node_->get_logger(), "[sim] Rejected incomplete LQI position-control configuration");
-    return;
+    RCLCPP_WARN(node_->get_logger(), "[sim] Rejected position-control configuration");
   }
-  PositionControlConfig config;
-  for (size_t axis = 0; axis < 3; ++axis)
+}
+
+void FlightControlRosModule::healthConfigCallback_(const spinal_msgs::msg::HealthConfig::SharedPtr msg)
+{
+  if (!msg) return;
+  const std::lock_guard<std::mutex> lock(control_mutex_);
+  if (!flight_control_ros::applyHealthConfig(flight_control_, *msg))
   {
-    config.position_p[axis] = msg->position_p[axis];
-    config.position_i[axis] = msg->position_i[axis];
-    config.velocity_d[axis] = msg->velocity_d[axis];
-    config.limit_sum[axis] = msg->limit_sum[axis];
-    config.limit_p[axis] = msg->limit_p[axis];
-    config.limit_i[axis] = msg->limit_i[axis];
-    config.limit_d[axis] = msg->limit_d[axis];
-    config.limit_err_p[axis] = msg->limit_err_p[axis];
-    config.limit_err_d[axis] = msg->limit_err_d[axis];
-    config.integral_limit[axis] = msg->integral_limit[axis];
+    RCLCPP_WARN(node_->get_logger(), "[sim] Rejected health configuration");
   }
-  config.yaw_p = msg->yaw_p;
-  config.yaw_i = msg->yaw_i;
-  config.yaw_limit_sum = msg->yaw_limit_sum;
-  config.yaw_limit_err_p = msg->yaw_limit_err_p;
-  config.yaw_limit_err_i = msg->yaw_limit_err_i;
-  config.yaw_limit_err_d = msg->yaw_limit_err_d;
-  config.max_horizontal_acceleration = msg->max_horizontal_acceleration;
-  config.max_vertical_acceleration = msg->max_vertical_acceleration;
-  config.max_tilt_angle = msg->max_tilt_angle;
-  config.motor_count = std::min(motor_count, static_cast<size_t>(MAX_FLIGHT_CONTROL_MOTOR_NUM));
-  for (size_t motor = 0; motor < config.motor_count; ++motor)
-  {
-    config.vertical_acceleration_to_thrust[motor] = msg->vertical_acceleration_to_thrust[motor];
-    if (motor < msg->yaw_acceleration_to_thrust.size())
-      config.yaw_acceleration_to_thrust[motor] = msg->yaw_acceleration_to_thrust[motor];
-    if (motor < msg->z_p_gain.size()) config.z_p_gain[motor] = msg->z_p_gain[motor];
-    if (motor < msg->z_i_gain.size()) config.z_i_gain[motor] = msg->z_i_gain[motor];
-    if (motor < msg->z_d_gain.size()) config.z_d_gain[motor] = msg->z_d_gain[motor];
-    if (motor < msg->yaw_p_gain.size()) config.yaw_p_gain[motor] = msg->yaw_p_gain[motor];
-    if (motor < msg->yaw_i_gain.size()) config.yaw_i_gain[motor] = msg->yaw_i_gain[motor];
-    if (motor < msg->yaw_d_gain.size()) config.yaw_d_gain[motor] = msg->yaw_d_gain[motor];
-  }
-  config.use_lqi_gains = msg->use_lqi_gains;
-  config.yaw_rate_feedback_on_spinal = msg->yaw_rate_feedback_on_spinal;
-  config.start_roll_pitch_integration_height = msg->start_roll_pitch_integration_height;
-  config.landing_err_z = msg->landing_err_z;
-  config.safe_landing_height = msg->safe_landing_height;
-  config.setpoint_timeout_ms = msg->setpoint_timeout_ms;
-  config.rc_max_horizontal_velocity = msg->rc_max_horizontal_velocity;
-  config.rc_max_vertical_velocity = msg->rc_max_vertical_velocity;
-  config.rc_max_yaw_rate = msg->rc_max_yaw_rate;
-  config.rc_deadzone = msg->rc_deadzone;
-  config.rc_timeout_ms = msg->rc_timeout_ms;
-  (void)flight_control_.applyPositionControlConfig(config);
 }
 
 void FlightControlRosModule::positionSetpointCallback_(const spinal_msgs::msg::PositionControlSetpoint::SharedPtr msg)
 {
   if (!msg) return;
-  PositionControlSetpoint setpoint;
-  setpoint.position = ap::Vector3f(msg->position[0], msg->position[1], msg->position[2]);
-  setpoint.velocity = ap::Vector3f(msg->velocity[0], msg->velocity[1], msg->velocity[2]);
-  setpoint.acceleration = ap::Vector3f(msg->acceleration[0], msg->acceleration[1], msg->acceleration[2]);
-  setpoint.yaw = msg->yaw;
-  setpoint.yaw_rate = msg->yaw_rate;
-  setpoint.yaw_acceleration = msg->yaw_acceleration;
-  setpoint.initial_height = msg->initial_height;
-  setpoint.horizontal_control_mode = msg->horizontal_control_mode;
-  setpoint.active = msg->active;
-  setpoint.manual_control_allowed = msg->manual_control_allowed;
-  setpoint.landing = msg->landing;
-  (void)flight_control_.applyPositionControlSetpoint(setpoint);
+  const std::lock_guard<std::mutex> lock(control_mutex_);
+  (void)flight_control_ros::applyPositionControlSetpoint(flight_control_, *msg);
+}
+
+void FlightControlRosModule::networkHeartbeatCallback_(const std_msgs::msg::Empty::SharedPtr msg)
+{
+  if (!msg) return;
+  const std::lock_guard<std::mutex> lock(control_mutex_);
+  flight_control_.noteNetworkHeartbeat();
 }
 
 void FlightControlRosModule::attitudeControlCallback_(const std::shared_ptr<std_srvs::srv::SetBool::Request> req,
                                                       std::shared_ptr<std_srvs::srv::SetBool::Response> res)
 {
   if (!req || !res) return;
+  const std::lock_guard<std::mutex> lock(control_mutex_);
   flight_control_.setAttitudeControlFlag(req->data);
   res->success = true;
 }
@@ -414,6 +351,7 @@ void FlightControlRosModule::positionControlCallback_(const std::shared_ptr<std_
                                                       std::shared_ptr<std_srvs::srv::SetBool::Response> res)
 {
   if (!req || !res) return;
+  const std::lock_guard<std::mutex> lock(control_mutex_);
   flight_control_.setPositionControlEnabled(req->data);
   res->success = flight_control_.getPositionController().enabled() == req->data;
   res->message = res->success ? "position control mode updated" : "disarm before changing position control mode";

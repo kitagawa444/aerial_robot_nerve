@@ -32,6 +32,7 @@ public:
   float getForceLandingThrust() const { return force_landing_thrust_; }
   uint8_t getControlMode() const;
   ThrusterControlLimits getControlLimits();
+  float measuredBatteryVoltage() const { return sim_voltage_ > 0.0f ? sim_voltage_ : -1.0f; }
 
   bool motorPwmPublishReady(bool update_last_time = false);
   uint16_t getMotorPwmRosValue(uint8_t index) const;

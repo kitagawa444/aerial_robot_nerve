@@ -4,6 +4,7 @@
 #include <cstdint>
 
 #include "flight_control/flight_control_types.h"
+#include "flight_control/supervisor/flight_supervisor.h"
 #include "state_estimate/eskf/eskf15.h"
 
 struct PositionControlConfig
@@ -47,6 +48,7 @@ struct PositionControlConfig
   float rc_max_yaw_rate{ 0.1f };
   float rc_deadzone{ 0.2f };
   uint32_t rc_timeout_ms{ 100U };
+  FlightSupervisorConfig supervisor{};
 };
 
 struct PositionControlSetpoint
