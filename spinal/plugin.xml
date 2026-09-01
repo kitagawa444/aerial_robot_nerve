@@ -60,4 +60,19 @@
       <statustip>A plugin for thruster test commands and ESC telemetry monitoring</statustip>
     </qtgui>
   </class>
+  <class
+      name="SpinalParameterDatabase"
+      type="spinal.parameter_database.ParameterDatabase"
+      base_class_type="rqt_gui_py::Plugin">
+    <description>Application Flash, reboot Config Flash, and flight parameter database</description>
+    <qtgui>
+      <group>
+        <icon type="theme">folder</icon>
+        <label>aerial robot</label>
+      </group>
+      <label>Spinal Flash &amp; Parameters</label>
+      <icon type="theme">preferences-system</icon>
+      <statustip>Inspect firmware capabilities and manage Config Flash and flight parameters</statustip>
+    </qtgui>
+  </class>
 </library>

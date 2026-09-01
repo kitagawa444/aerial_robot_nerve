@@ -1,0 +1,23 @@
+uint8 STATUS = 0
+uint8 COMMIT = 1
+uint8 RELOAD = 2
+
+uint8 command
+---
+uint8 RESULT_OK = 0
+uint8 RESULT_INVALID_COMMAND = 1
+uint8 RESULT_ARMED = 2
+uint8 RESULT_INCOMPLETE = 3
+uint8 RESULT_STORAGE_ERROR = 4
+uint8 RESULT_NO_VALID_DATABASE = 5
+
+bool success
+uint8 result
+bool valid
+bool dirty
+bool applied
+bool persistent_storage
+uint16 schema_version
+uint32 generation
+uint32 crc32
+uint32 valid_fields

@@ -3,15 +3,19 @@
 #include "flight_control/board/flight_control_ros_module.h"
 
 #include "flight_control/flight_control_ros_adapter.h"
+#include "flashmemory/flashmemory.h"
+#include "flashmemory/application_capabilities.h"
+#include "flashmemory/config_flash_storage.h"
 
 #include <rmw_microros/rmw_microros.h>
 
 FlightControlRosModule *FlightControlRosModule::instance_ = nullptr;
 
 void FlightControlRosModule::init_hw(StateEstimate *estimator, ThrusterManager *thruster, DirectServo *servo,
-                                     osMutexId *control_mutex)
+                                     osMutexId *control_mutex, ConfigFlashDatabase *config_flash_database)
 {
   control_mutex_ = control_mutex;
+  config_flash_database_ = config_flash_database;
   flight_control_.init(estimator, thruster, servo);
 }
 
@@ -36,10 +40,17 @@ void FlightControlRosModule::create_entities(rcl_node_t &node)
   spinal_msgs__msg__FlightStatus__init(&flight_status_msg_);
   spinal_msgs__msg__RollPitchYawTerms__init(&control_term_msg_);
   spinal_msgs__msg__RollPitchYawTerm__init(&control_feedback_state_msg_);
+  spinal_msgs__msg__ApplicationCapabilities__init(&application_capabilities_msg_);
+  spinal_msgs__msg__ConfigFlashStatus__init(&config_flash_status_msg_);
+  spinal_msgs__msg__FlightParameterTable__init(&flight_parameter_table_msg_);
   std_srvs__srv__SetBool_Request__init(&att_control_req_);
   std_srvs__srv__SetBool_Response__init(&att_control_res_);
   std_srvs__srv__SetBool_Request__init(&position_control_req_);
   std_srvs__srv__SetBool_Response__init(&position_control_res_);
+  spinal_msgs__srv__ManageFlightParameters_Request__init(&parameter_database_req_);
+  spinal_msgs__srv__ManageFlightParameters_Response__init(&parameter_database_res_);
+  spinal_msgs__srv__ManageConfigFlash_Request__init(&config_flash_req_);
+  spinal_msgs__srv__ManageConfigFlash_Response__init(&config_flash_res_);
 
   configure_message_storage_();
 
@@ -106,6 +117,18 @@ void FlightControlRosModule::create_entities(rcl_node_t &node)
   (void)init_publisher_default(node, control_feedback_state_pub_,
                                ROSIDL_GET_MSG_TYPE_SUPPORT(spinal_msgs, msg, RollPitchYawTerm), "rpy/feedback_state");
 
+  (void)init_publisher_default(node, application_capabilities_pub_,
+                               ROSIDL_GET_MSG_TYPE_SUPPORT(spinal_msgs, msg, ApplicationCapabilities),
+                               "fc/application_capabilities");
+
+  (void)init_publisher_default(node, config_flash_status_pub_,
+                               ROSIDL_GET_MSG_TYPE_SUPPORT(spinal_msgs, msg, ConfigFlashStatus),
+                               "fc/config_flash/status");
+
+  (void)init_publisher_default(node, flight_parameter_table_pub_,
+                               ROSIDL_GET_MSG_TYPE_SUPPORT(spinal_msgs, msg, FlightParameterTable),
+                               "fc/flight_parameters/table");
+
   (void)init_service_default(node, att_control_srv_, ROSIDL_GET_SRV_TYPE_SUPPORT(std_srvs, srv, SetBool),
                              "set_attitude_control", &att_control_req_, &att_control_res_,
                              &FlightControlRosModule::attitudeControlCallbackStatic_);
@@ -113,6 +136,15 @@ void FlightControlRosModule::create_entities(rcl_node_t &node)
   (void)init_service_default(node, position_control_srv_, ROSIDL_GET_SRV_TYPE_SUPPORT(std_srvs, srv, SetBool),
                              "set_position_control", &position_control_req_, &position_control_res_,
                              &FlightControlRosModule::positionControlCallbackStatic_);
+
+  (void)init_service_default(node, parameter_database_srv_,
+                             ROSIDL_GET_SRV_TYPE_SUPPORT(spinal_msgs, srv, ManageFlightParameters), "fc/parameters",
+                             &parameter_database_req_, &parameter_database_res_,
+                             &FlightControlRosModule::parameterDatabaseCallbackStatic_);
+
+  (void)init_service_default(node, config_flash_srv_, ROSIDL_GET_SRV_TYPE_SUPPORT(spinal_msgs, srv, ManageConfigFlash),
+                             "fc/config_flash", &config_flash_req_, &config_flash_res_,
+                             &FlightControlRosModule::configFlashCallbackStatic_);
 }
 
 void FlightControlRosModule::update()
@@ -152,6 +184,22 @@ void FlightControlRosModule::publish()
     (void)rcl_publish(&flight_status_pub_, &flight_status_msg_, nullptr);
     last_flight_status_sequence_ = status.sequence;
     last_flight_status_publish_ms_ = now_ms;
+  }
+
+  if (now_ms - last_storage_status_publish_ms_ >= 1000U)
+  {
+    application_capabilities_msg_.board = spinal_msgs__msg__ApplicationCapabilities__BOARD_STM32H7_V2;
+    application_capabilities_msg_.capability_mask = ApplicationCapability::mask();
+    application_capabilities_msg_.max_motor_count = MAX_FLIGHT_CONTROL_MOTOR_NUM;
+    application_capabilities_msg_.config_schema_version = ConfigFlashDatabase::SCHEMA_VERSION;
+    application_capabilities_msg_.flight_parameter_schema_version = FlightParameterDatabase::SCHEMA_VERSION;
+    (void)rcl_publish(&application_capabilities_pub_, &application_capabilities_msg_, nullptr);
+    fillConfigFlashStatus_(config_flash_status_msg_);
+    (void)rcl_publish(&config_flash_status_pub_, &config_flash_status_msg_, nullptr);
+    flight_control_ros::fillFlightParameterTable(flight_parameter_table_msg_, flight_control_.parameterDatabase(),
+                                                 flight_control_.parametersApplied(), true);
+    (void)rcl_publish(&flight_parameter_table_pub_, &flight_parameter_table_msg_, nullptr);
+    last_storage_status_publish_ms_ = now_ms;
   }
 
   AttitudeController &att = flight_control_.getAttitudeController();
@@ -218,6 +266,33 @@ void FlightControlRosModule::configure_message_storage_()
   control_term_msg_.motors.data = control_term_buf_;
   control_term_msg_.motors.size = 0;
   control_term_msg_.motors.capacity = MAX_RPY_TERMS_SIZE;
+
+  flight_parameter_table_msg_.pwm.motor_info.data = flight_parameter_pwm_motor_info_buf_;
+  flight_parameter_table_msg_.pwm.motor_info.size = 0;
+  flight_parameter_table_msg_.pwm.motor_info.capacity = MAX_PWM_MOTOR_INFO_SIZE;
+  flight_parameter_table_msg_.attitude_gains.motors.data = rpy_gain_buf_;
+  flight_parameter_table_msg_.attitude_gains.motors.size = 0;
+  flight_parameter_table_msg_.attitude_gains.motors.capacity = MAX_RPY_TERMS_SIZE;
+  flight_parameter_table_msg_.p_matrix.pseudo_inverse.data = p_matrix_buf_;
+  flight_parameter_table_msg_.p_matrix.pseudo_inverse.size = 0;
+  flight_parameter_table_msg_.p_matrix.pseudo_inverse.capacity = MAX_P_MATRIX_SIZE;
+  flight_parameter_table_msg_.torque_allocation.rows.data = torque_allocation_buf_;
+  flight_parameter_table_msg_.torque_allocation.rows.size = 0;
+  flight_parameter_table_msg_.torque_allocation.rows.capacity = MAX_TORQUE_ALLOC_SIZE;
+
+#define CONFIGURE_TABLE_FLOAT_SEQUENCE(field, buffer)                                                                  \
+  flight_parameter_table_msg_.position_control.field.data = buffer;                                                    \
+  flight_parameter_table_msg_.position_control.field.size = 0;                                                         \
+  flight_parameter_table_msg_.position_control.field.capacity = MAX_FLIGHT_CONTROL_MOTOR_NUM
+  CONFIGURE_TABLE_FLOAT_SEQUENCE(vertical_acceleration_to_thrust, position_thrust_conversion_buf_);
+  CONFIGURE_TABLE_FLOAT_SEQUENCE(yaw_acceleration_to_thrust, position_yaw_acceleration_conversion_buf_);
+  CONFIGURE_TABLE_FLOAT_SEQUENCE(z_p_gain, position_z_p_gain_buf_);
+  CONFIGURE_TABLE_FLOAT_SEQUENCE(z_i_gain, position_z_i_gain_buf_);
+  CONFIGURE_TABLE_FLOAT_SEQUENCE(z_d_gain, position_z_d_gain_buf_);
+  CONFIGURE_TABLE_FLOAT_SEQUENCE(yaw_p_gain, position_yaw_p_gain_buf_);
+  CONFIGURE_TABLE_FLOAT_SEQUENCE(yaw_i_gain, position_yaw_i_gain_buf_);
+  CONFIGURE_TABLE_FLOAT_SEQUENCE(yaw_d_gain, position_yaw_d_gain_buf_);
+#undef CONFIGURE_TABLE_FLOAT_SEQUENCE
 }
 
 void FlightControlRosModule::fillControlTerms_(const FlightControlRpyTerms &src)
@@ -234,6 +309,43 @@ void FlightControlRosModule::fillControlTerms_(const FlightControlRpyTerms &src)
 void FlightControlRosModule::fillControlFeedback_(const FlightControlRpyTerm &src)
 {
   flight_control_ros::fillRollPitchYawTerm(control_feedback_state_msg_, src);
+}
+
+void FlightControlRosModule::fillConfigFlashStatus_(spinal_msgs__msg__ConfigFlashStatus &msg) const
+{
+  if (config_flash_database_ == nullptr)
+  {
+    msg = spinal_msgs__msg__ConfigFlashStatus{};
+    return;
+  }
+  msg.valid = config_flash_database_->valid();
+  msg.dirty = config_flash_database_->dirty();
+  msg.reboot_required = config_flash_database_->rebootRequired();
+  msg.persistent_storage = true;
+  msg.active_slot = config_flash_database_->activeSlot();
+  msg.active_uart3_driver = config_flash_database_->activeUart3Driver();
+  msg.pending_uart3_driver = config_flash_database_->pendingUart3Driver();
+  const ConfigFlashPayload &active = config_flash_database_->activeConfiguration();
+  const ConfigFlashPayload &pending = config_flash_database_->pendingConfiguration();
+  msg.active_imu_driver = active.imu_driver;
+  msg.pending_imu_driver = pending.imu_driver;
+  msg.active_barometer_enabled = active.barometer_enabled != 0U;
+  msg.pending_barometer_enabled = pending.barometer_enabled != 0U;
+  msg.active_servo_driver = active.servo_driver;
+  msg.pending_servo_driver = pending.servo_driver;
+  msg.active_attitude_estimation_enabled = active.attitude_estimation_enabled != 0U;
+  msg.pending_attitude_estimation_enabled = pending.attitude_estimation_enabled != 0U;
+  msg.active_height_estimation_enabled = active.height_estimation_enabled != 0U;
+  msg.pending_height_estimation_enabled = pending.height_estimation_enabled != 0U;
+  msg.active_position_estimation_enabled = active.position_estimation_enabled != 0U;
+  msg.pending_position_estimation_enabled = pending.position_estimation_enabled != 0U;
+  msg.active_flight_control_enabled = active.flight_control_enabled != 0U;
+  msg.pending_flight_control_enabled = pending.flight_control_enabled != 0U;
+  msg.active_motor_output_driver = active.motor_output_driver;
+  msg.pending_motor_output_driver = pending.motor_output_driver;
+  msg.schema_version = config_flash_database_->schemaVersion();
+  msg.generation = config_flash_database_->generation();
+  msg.crc32 = config_flash_database_->crc32();
 }
 
 void FlightControlRosModule::lock_control_()
@@ -392,6 +504,131 @@ void FlightControlRosModule::positionControlCallbackStatic_(const void *req_msg,
   instance_->lock_control_();
   instance_->flight_control_.setPositionControlEnabled(req->data);
   res->success = instance_->flight_control_.getPositionController().enabled() == req->data;
+  instance_->unlock_control_();
+}
+
+void FlightControlRosModule::parameterDatabaseCallbackStatic_(const void *req_msg, void *res_msg)
+{
+  if (instance_ == nullptr || req_msg == nullptr || res_msg == nullptr) return;
+  const auto *req = reinterpret_cast<const spinal_msgs__srv__ManageFlightParameters_Request *>(req_msg);
+  auto *res = reinterpret_cast<spinal_msgs__srv__ManageFlightParameters_Response *>(res_msg);
+
+  instance_->lock_control_();
+  res->success = false;
+  res->result = spinal_msgs__srv__ManageFlightParameters_Response__RESULT_INVALID_COMMAND;
+  res->persistent_storage = true;
+
+  const bool armed = instance_->flight_control_.getSupervisor().status().arming_state == FlightArmingState::ARMED;
+  if (req->command == spinal_msgs__srv__ManageFlightParameters_Request__STATUS)
+  {
+    res->success = true;
+    res->result = spinal_msgs__srv__ManageFlightParameters_Response__RESULT_OK;
+  }
+  else if (req->command == spinal_msgs__srv__ManageFlightParameters_Request__COMMIT)
+  {
+    if (armed)
+    {
+      res->result = spinal_msgs__srv__ManageFlightParameters_Response__RESULT_ARMED;
+    }
+    else if (!instance_->flight_control_.prepareParameterCommit())
+    {
+      res->result = spinal_msgs__srv__ManageFlightParameters_Response__RESULT_INCOMPLETE;
+    }
+    else
+    {
+      const HAL_StatusTypeDef erase_status = FlashMemory::erase();
+      const HAL_StatusTypeDef write_status = erase_status == HAL_OK ? FlashMemory::write() : erase_status;
+      const HAL_StatusTypeDef read_status = write_status == HAL_OK ? FlashMemory::read() : write_status;
+      const bool verified = read_status == HAL_OK && instance_->flight_control_.reloadParameterDatabase();
+      res->success = erase_status == HAL_OK && write_status == HAL_OK && verified;
+      res->result = res->success ? spinal_msgs__srv__ManageFlightParameters_Response__RESULT_OK :
+                                   spinal_msgs__srv__ManageFlightParameters_Response__RESULT_STORAGE_ERROR;
+      if (!res->success) instance_->flight_control_.getParameterDatabase().markCommitFailed();
+    }
+  }
+  else if (req->command == spinal_msgs__srv__ManageFlightParameters_Request__RELOAD)
+  {
+    if (armed)
+    {
+      res->result = spinal_msgs__srv__ManageFlightParameters_Response__RESULT_ARMED;
+    }
+    else if (FlashMemory::read() != HAL_OK || !instance_->flight_control_.reloadParameterDatabase())
+    {
+      res->result = spinal_msgs__srv__ManageFlightParameters_Response__RESULT_NO_VALID_DATABASE;
+    }
+    else
+    {
+      res->success = true;
+      res->result = spinal_msgs__srv__ManageFlightParameters_Response__RESULT_OK;
+    }
+  }
+
+  const FlightParameterDatabase &database = instance_->flight_control_.parameterDatabase();
+  res->valid = database.valid();
+  res->dirty = database.dirty();
+  res->applied = instance_->flight_control_.parametersApplied();
+  res->schema_version = database.schemaVersion();
+  res->generation = database.generation();
+  res->crc32 = database.crc32();
+  res->valid_fields = database.validFields();
+  instance_->unlock_control_();
+}
+
+void FlightControlRosModule::configFlashCallbackStatic_(const void *req_msg, void *res_msg)
+{
+  if (instance_ == nullptr || req_msg == nullptr || res_msg == nullptr) return;
+  const auto *req = reinterpret_cast<const spinal_msgs__srv__ManageConfigFlash_Request *>(req_msg);
+  auto *res = reinterpret_cast<spinal_msgs__srv__ManageConfigFlash_Response *>(res_msg);
+
+  instance_->lock_control_();
+  res->success = false;
+  res->result = spinal_msgs__srv__ManageConfigFlash_Response__RESULT_INVALID_COMMAND;
+  ConfigFlashDatabase *database = instance_->config_flash_database_;
+  const bool armed = instance_->flight_control_.getSupervisor().status().arming_state == FlightArmingState::ARMED;
+
+  if (database == nullptr)
+  {
+    res->result = spinal_msgs__srv__ManageConfigFlash_Response__RESULT_STORAGE_ERROR;
+  }
+  else if (req->command == spinal_msgs__srv__ManageConfigFlash_Request__STATUS)
+  {
+    res->success = true;
+    res->result = spinal_msgs__srv__ManageConfigFlash_Response__RESULT_OK;
+  }
+  else if (armed)
+  {
+    res->result = spinal_msgs__srv__ManageConfigFlash_Response__RESULT_ARMED;
+  }
+  else if (req->command == spinal_msgs__srv__ManageConfigFlash_Request__STAGE)
+  {
+    ConfigFlashPayload pending = database->pendingConfiguration();
+    pending.imu_driver = req->imu_driver;
+    pending.barometer_enabled = req->barometer_enabled ? 1U : 0U;
+    pending.uart3_driver = req->uart3_driver;
+    pending.servo_driver = req->servo_driver;
+    pending.attitude_estimation_enabled = req->attitude_estimation_enabled ? 1U : 0U;
+    pending.height_estimation_enabled = req->height_estimation_enabled ? 1U : 0U;
+    pending.position_estimation_enabled = req->position_estimation_enabled ? 1U : 0U;
+    pending.flight_control_enabled = req->flight_control_enabled ? 1U : 0U;
+    pending.motor_output_driver = req->motor_output_driver;
+    res->success = database->stageConfiguration(pending, ApplicationCapability::support());
+    res->result = res->success ? spinal_msgs__srv__ManageConfigFlash_Response__RESULT_OK :
+                                 spinal_msgs__srv__ManageConfigFlash_Response__RESULT_UNSUPPORTED;
+  }
+  else if (req->command == spinal_msgs__srv__ManageConfigFlash_Request__COMMIT)
+  {
+    res->success = ConfigFlashStorage::commit(*database);
+    res->result = res->success ? spinal_msgs__srv__ManageConfigFlash_Response__RESULT_OK :
+                                 spinal_msgs__srv__ManageConfigFlash_Response__RESULT_STORAGE_ERROR;
+  }
+  else if (req->command == spinal_msgs__srv__ManageConfigFlash_Request__RELOAD)
+  {
+    res->success = ConfigFlashStorage::reload(*database);
+    res->result = res->success ? spinal_msgs__srv__ManageConfigFlash_Response__RESULT_OK :
+                                 spinal_msgs__srv__ManageConfigFlash_Response__RESULT_NO_VALID_CONFIG;
+  }
+
+  instance_->fillConfigFlashStatus_(res->status);
   instance_->unlock_control_();
 }
 

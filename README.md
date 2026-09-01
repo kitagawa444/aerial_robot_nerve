@@ -215,17 +215,52 @@ ros2 run spinal flash_firmware.py \
 
 The first installation of firmware containing `/enter_bootloader`, and recovery
 from corrupted or non-booting firmware, need ST-LINK. The updater writes only
-the application image and does not request a mass erase, preserving the
-configuration sector at `0x081e0000`. Fully unattended updates without ST-LINK
+the application image and does not request a mass erase, preserving the three
+configuration sectors at `0x081a0000` through `0x081fffff`. Fully unattended updates without ST-LINK
 require either a board revision exposing BOOT0 and NRST to the host, or a custom
 Flash-resident bootloader that does not enter the factory ROM loader.
 
+## Application Flash, Config Flash, and flight parameters
+
+The STM32H743 Flash layout intentionally separates three storage classes:
+
+| Region | Address | Purpose | Runtime behavior |
+| --- | --- | --- | --- |
+| Application Flash | `0x08000000`–`0x0819ffff` | Firmware and compiled-in driver capabilities | Changed only by firmware programming |
+| Config Flash A/B | `0x081a0000`, `0x081c0000` | Boot-time driver and subsystem selections | CRC32-checked, alternates erase sectors, applied after reboot |
+| Flight/calibration data | `0x081e0000` | Gains, allocation, PWM, Health, calibration, and servo settings | Separately committed; flight values can be staged at runtime |
+
+ICM20948, MPU9250, barometer, GPS, receive-only CRSF, Dynamixel, Kondo, PWM,
+DSHOT, estimators, and flight control are compiled into the STM32H7 v2
+application. Config Flash selects the IMU, barometer, UART3, servo, attitude /
+height / position estimation, flight control, and motor-output settings.
+`fc/config_flash` (`spinal_msgs/srv/ManageConfigFlash`) stages, commits, or
+reloads the complete boot configuration. Invalid dependencies, such as height
+estimation without an IMU, barometer, and attitude estimation, are rejected. A
+commit never changes a live peripheral. The
+disarmed-only `fc/reboot` service first stops motor outputs and then performs a
+normal application reset, which applies the saved selection. The A/B Config
+Flash writer erases only the inactive slot and verifies its CRC before making
+it the newest generation, so an interrupted write leaves the previous slot
+bootable.
+
+Open `Plugins > aerial robot > Spinal Flash & Parameters` in rqt. Its tabs keep
+the compiled Application capabilities read-only, mark Config Flash changes as
+requiring reboot, and show the complete flight-parameter table separately.
+`Apply Config Flash & Reboot` automates stage, commit, and normal reboot while
+preserving those separate operations and their individual error checks.
+
+Gazebo exposes the same topics, services, dependency checks, and rqt controls.
+Its A/B images are persisted by the `config_flash_path` ROS parameter (default:
+`/tmp/spinal_config_flash.bin`), and `fc/reboot` performs a simulated reboot so
+the running/pending distinction can be tested without hardware.
+
 ## ExpressLRS / CRSF receiver on UART3
 
-The STM32H7 v2 configuration enables `CRSF_RC_INPUT` on UART3. UART3 is set to
-420000 baud, 8-N-1, uninverted, receive-only mode. Because GPS previously used the
-same UART, `GPS_FLAG` and `CRSF_RC_INPUT` are mutually exclusive compile-time
-options in `configs/STM32H7_v2/config.h`.
+When Config Flash selects CRSF, UART3 is set to 420000 baud, 8-N-1,
+uninverted, receive-only mode. Selecting GPS instead configures the same UART
+for the GPS driver at the next reboot. Both are Application capabilities, but
+only one owns UART3 during a boot.
 
 Wire the ExpressLRS receiver to the v2 board's J7 connector as follows:
 

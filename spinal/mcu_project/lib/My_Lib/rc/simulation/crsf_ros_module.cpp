@@ -30,7 +30,7 @@ void CrsfRosModuleSim::init(const std::shared_ptr<rclcpp_lifecycle::LifecycleNod
 
 void CrsfRosModuleSim::update()
 {
-  if (!node_ || serial_port_.empty()) return;
+  if (!enabled_ || !node_ || serial_port_.empty()) return;
 
   const uint32_t now_ms = steady_time_ms_();
   if (serial_fd_ < 0)
@@ -71,6 +71,12 @@ void CrsfRosModuleSim::update()
     apply_rc_input_(parser_.channels(), false);
     (void)teleop_interpreter_.update(nullptr, 0U, false, now_ms);
   }
+}
+
+void CrsfRosModuleSim::setEnabled(bool enabled)
+{
+  enabled_ = enabled;
+  if (!enabled_) close_serial_();
 }
 
 uint32_t CrsfRosModuleSim::steady_time_ms_()

@@ -37,18 +37,21 @@ public:
   void init()
   {
     attitude_estimate_flag_ = true;
+    altitude_estimate_flag_ = true;
+    pos_estimate_flag_ = true;
     attitude_estimator_.init();
     eskf_.reset();
     last_imu_update_time_ms_ = 0U;
   }
 #else
-  void init(IMU *imu, Baro *baro, GPS *gps)
+  void init(IMU *imu, Baro *baro, GPS *gps, bool attitude_enabled = true, bool height_enabled = true,
+            bool position_enabled = true)
   {
     imu_ = imu;
     baro_ = baro;
     gps_ = gps;
 
-    if (imu_ == nullptr)
+    if (imu_ == nullptr || !attitude_enabled)
     {
       attitude_estimate_flag_ = false;
     }
@@ -58,8 +61,8 @@ public:
       attitude_estimator_.init(imu_, gps_);
     }
 
-    altitude_estimate_flag_ = (baro_ != nullptr);
-    pos_estimate_flag_ = (gps_ != nullptr);
+    altitude_estimate_flag_ = height_enabled && baro_ != nullptr && attitude_estimate_flag_;
+    pos_estimate_flag_ = position_enabled && attitude_estimate_flag_;
 
     eskf_.reset();
     last_imu_update_time_ms_ = HAL_GetTick();
@@ -69,9 +72,12 @@ public:
 #ifdef SIMULATION
   void update(uint32_t now_ms)
   {
-    attitude_estimator_.update();
-    updateEskf_(now_ms, attitude_estimator_.getAccVec(), attitude_estimator_.getGyroVec());
-    updateDirectStateFreshness_();
+    if (attitude_estimate_flag_)
+    {
+      attitude_estimator_.update();
+      updateEskf_(now_ms, attitude_estimator_.getAccVec(), attitude_estimator_.getGyroVec());
+      updateDirectStateFreshness_();
+    }
   }
 #else
   void update()
@@ -104,6 +110,13 @@ public:
   }
 
   bool directStateEnabled() const { return direct_state_enabled_; }
+
+  void configureSubsystems(bool attitude_enabled, bool height_enabled, bool position_enabled)
+  {
+    attitude_estimate_flag_ = attitude_enabled;
+    altitude_estimate_flag_ = height_enabled && attitude_enabled;
+    pos_estimate_flag_ = position_enabled && attitude_enabled;
+  }
 
   bool applyDirectExternalState(const ap::Vector3f &position, const ap::Vector3f &position_variance,
                                 const ap::Vector3f &velocity, const ap::Vector3f &velocity_variance,

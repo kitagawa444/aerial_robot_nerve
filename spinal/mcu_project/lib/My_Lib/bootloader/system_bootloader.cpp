@@ -32,7 +32,18 @@ void restore_application_boot_address()
   HAL_SYSCFG_CM7BootAddConfig(SYSCFG_BOOT_ADDR0, kSystemMemoryBootAddress);
   __DSB();
   NVIC_SystemReset();
-  while (true) {}
+  while (true)
+  {
+  }
+}
+
+[[noreturn]] void request_application_reset()
+{
+  restore_application_boot_address();
+  NVIC_SystemReset();
+  while (true)
+  {
+  }
 }
 
 }  // namespace SystemBootloader

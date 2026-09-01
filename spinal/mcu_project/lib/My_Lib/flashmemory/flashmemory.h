@@ -13,16 +13,15 @@
 
 #define FLASHWORD_SIZE 32
 
-namespace FlashMemory {
-	void init(uint32_t data_address, uint32_t data_sector);
-	void addValue(void* ptr, size_t size);
-	HAL_StatusTypeDef read();
-	void erase();
-	void write();
-	bool isLock();
+namespace FlashMemory
+{
+void init(uint32_t data_address, uint32_t data_sector);
+void addValue(void *ptr, size_t size);
+HAL_StatusTypeDef read();
+HAL_StatusTypeDef erase();
+HAL_StatusTypeDef write();
+bool isLock();
 }
-
-
 
 
 #endif /* APPLICATION_JSK_LIB_FLASHMEMORY_FLASHMEMORY_H_ */

@@ -45,7 +45,11 @@ ITCMRAM    (xrw)    : ORIGIN = 0x00000000,   LENGTH = 64K
 RAM_D1    (xrw)    : ORIGIN = 0x24000000,   LENGTH = 512K
 RAM_D2    (xrw)    : ORIGIN = 0x30000000,   LENGTH = 288K
 RAM_D3    (xrw)    : ORIGIN = 0x38000000,   LENGTH = 64K
-FLASH    (rx)    : ORIGIN = 0x8000000,   LENGTH = 1920K /* 2048 - 128 = 1920  */
+/* Bank2 sectors 5 and 6 are the power-loss-safe A/B Config Flash slots.
+ * Sector 7 remains the legacy runtime parameter/calibration store. */
+FLASH    (rx)    : ORIGIN = 0x8000000,   LENGTH = 1664K /* 2048 - 3 * 128 */
+CONFIG_A (rx)    : ORIGIN = 0x081A0000, LENGTH = 128K
+CONFIG_B (rx)    : ORIGIN = 0x081C0000, LENGTH = 128K
 DATA     (rx)    : ORIGIN = 0x081E0000, LENGTH = 128K
 }
 

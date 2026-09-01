@@ -57,6 +57,8 @@ void Error_Handler(void);
 
 /* USER CODE BEGIN EFP */
 
+extern uint8_t g_uart3_driver;
+
 /* USER CODE END EFP */
 
 /* Private defines -----------------------------------------------------------*/
@@ -91,6 +93,10 @@ void Error_Handler(void);
 #define BAROCS_Pin GPIO_PIN_1
 #define BAROCS_GPIO_Port GPIOE
 /* USER CODE BEGIN Private defines */
+
+#define UART3_DRIVER_DISABLED 0U
+#define UART3_DRIVER_GPS 1U
+#define UART3_DRIVER_CRSF 2U
 
 /* USER CODE END Private defines */
 

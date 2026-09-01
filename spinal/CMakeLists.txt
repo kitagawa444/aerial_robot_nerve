@@ -39,6 +39,9 @@ add_library(spinal_flight_control
   ${SPINAL_DIRS}/rc/crsf_protocol.cpp
   ${SPINAL_DIRS}/rc/crsf_teleop.cpp
   ${SPINAL_DIRS}/rc/simulation/crsf_ros_module.cpp
+  ${SPINAL_DIRS}/flashmemory/parameter_database.cpp
+  ${SPINAL_DIRS}/flashmemory/config_flash_database.cpp
+  ${SPINAL_DIRS}/flashmemory/config_flash_storage_sim.cpp
   ${SPINAL_DIRS}/flight_control/flight_control.cpp
   ${SPINAL_DIRS}/flight_control/flight_control_ros_adapter.cpp
   ${SPINAL_DIRS}/flight_control/health/actuator_health_monitor.cpp
@@ -183,6 +186,14 @@ if(BUILD_TESTING)
     test/health_manager_test.cpp
   )
   target_link_libraries(health_manager_test spinal_flight_control)
+  ament_add_gtest(parameter_database_test
+    test/parameter_database_test.cpp
+  )
+  target_link_libraries(parameter_database_test spinal_flight_control)
+  ament_add_gtest(config_flash_database_test
+    test/config_flash_database_test.cpp
+  )
+  target_link_libraries(config_flash_database_test spinal_flight_control)
 endif()
 
 install(PROGRAMS

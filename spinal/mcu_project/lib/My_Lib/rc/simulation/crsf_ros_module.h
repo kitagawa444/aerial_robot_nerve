@@ -23,6 +23,7 @@ public:
   void init(const std::shared_ptr<rclcpp_lifecycle::LifecycleNode> &node, const std::string &serial_port,
             uint32_t serial_baud, FlightControl *flight_control);
   void update();
+  void setEnabled(bool enabled);
 
 private:
   static constexpr uint32_t REOPEN_INTERVAL_MS = 1000U;
@@ -34,6 +35,7 @@ private:
   uint32_t last_open_attempt_ms_{ 0U };
   uint32_t last_rc_frame_ms_{ 0U };
   bool connected_{ false };
+  bool enabled_{ true };
   FlightControl *flight_control_{ nullptr };
 
   crsf::Parser parser_{};

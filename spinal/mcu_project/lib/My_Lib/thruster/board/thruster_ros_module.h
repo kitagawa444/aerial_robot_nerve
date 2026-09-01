@@ -18,33 +18,28 @@ class ThrusterRosModule final : public RosModuleBase
 {
 public:
   ThrusterRosModule()
-  : RosModuleBase(
-      RosModuleEntityCapacity()
-        .max_subscriptions(2)
-        .max_publishers(2)
-        .max_services(0)
-        .max_timers(0))
-  {}
-
-  void init_hw(TIM_HandleTypeDef* htim_primary, TIM_HandleTypeDef* htim_secondary)
+    : RosModuleBase(RosModuleEntityCapacity().max_subscriptions(2).max_publishers(2).max_services(0).max_timers(0))
   {
-    thruster_.init(htim_primary, htim_secondary);
   }
 
-#if DSHOT
-  void init_dshot_telemetry(UART_HandleTypeDef* huart, int num_motor_mag_pole = 14)
+  void init_hw(TIM_HandleTypeDef *htim_primary, TIM_HandleTypeDef *htim_secondary,
+               uint8_t output_driver = MotorOutputDriver::DRIVER_DSHOT)
+  {
+    thruster_.init(htim_primary, htim_secondary, output_driver);
+  }
+
+  void init_dshot_telemetry(UART_HandleTypeDef *huart, int num_motor_mag_pole = 14)
   {
     thruster_.initDShotTelemetry(huart, num_motor_mag_pole);
   }
-#endif
 
-  void setBatteryStatus(BatteryStatus* battery) { thruster_.setBatteryStatus(battery); }
+  void setBatteryStatus(BatteryStatus *battery) { thruster_.setBatteryStatus(battery); }
 
-  ThrusterManager* getThrusterManager() { return &thruster_; }
+  ThrusterManager *getThrusterManager() { return &thruster_; }
   void sendCommand() { thruster_.sendCommand(); }
   bool updateTelemetry() { return thruster_.updateTelemetry(); }
 
-  void create_entities(rcl_node_t& node) override;
+  void create_entities(rcl_node_t &node) override;
   void publish() override;
 
 private:
@@ -73,9 +68,9 @@ private:
 
   void configure_message_storage_();
   void fillPwms_();
-  void fillEscTelemetry_(const EscTelemetrySnapshot& snapshot);
+  void fillEscTelemetry_(const EscTelemetrySnapshot &snapshot);
 
-  static ThrusterRosModule* instance_;
-  static void pwmInfoCallbackStatic_(const void* msgin);
-  static void pwmTestCallbackStatic_(const void* msgin);
+  static ThrusterRosModule *instance_;
+  static void pwmInfoCallbackStatic_(const void *msgin);
+  static void pwmTestCallbackStatic_(const void *msgin);
 };

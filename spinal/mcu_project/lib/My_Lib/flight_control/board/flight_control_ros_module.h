@@ -10,8 +10,11 @@
 #include <std_srvs/srv/set_bool.h>
 
 #include <spinal_msgs/msg/desire_coord.h>
+#include <spinal_msgs/msg/application_capabilities.h>
+#include <spinal_msgs/msg/config_flash_status.h>
 #include <spinal_msgs/msg/flight_config_cmd.h>
 #include <spinal_msgs/msg/flight_status.h>
+#include <spinal_msgs/msg/flight_parameter_table.h>
 #include <spinal_msgs/msg/four_axis_command.h>
 #include <spinal_msgs/msg/health_config.h>
 #include <spinal_msgs/msg/p_matrix_pseudo_inverse_unit.h>
@@ -23,10 +26,13 @@
 #include <spinal_msgs/msg/torque_allocation_matrix_inv.h>
 #include <spinal_msgs/msg/uav_info.h>
 #include <spinal_msgs/msg/vector3_int16.h>
+#include <spinal_msgs/srv/manage_flight_parameters.h>
+#include <spinal_msgs/srv/manage_config_flash.h>
 
 #include <ros_utils/ros_module_base.hpp>
 
 #include "flight_control/flight_control.h"
+#include "flashmemory/config_flash_database.h"
 #include "servo/servo.h"
 #include "state_estimate/state_estimate.h"
 #include "thruster/board/thruster_manager.h"
@@ -35,12 +41,12 @@ class FlightControlRosModule final : public RosModuleBase
 {
 public:
   FlightControlRosModule()
-    : RosModuleBase(RosModuleEntityCapacity().max_subscriptions(12).max_publishers(4).max_services(2).max_timers(0))
+    : RosModuleBase(RosModuleEntityCapacity().max_subscriptions(12).max_publishers(7).max_services(4).max_timers(0))
   {
   }
 
   void init_hw(StateEstimate *estimator, ThrusterManager *thruster, DirectServo *servo = nullptr,
-               osMutexId *control_mutex = nullptr);
+               osMutexId *control_mutex = nullptr, ConfigFlashDatabase *config_flash_database = nullptr);
 
   FlightControl *getFlightControlCore() { return &flight_control_; }
 
@@ -53,9 +59,11 @@ private:
   static constexpr size_t MAX_RPY_TERMS_SIZE = MAX_FLIGHT_CONTROL_MOTOR_NUM;
   static constexpr size_t MAX_P_MATRIX_SIZE = MAX_FLIGHT_CONTROL_MOTOR_NUM;
   static constexpr size_t MAX_TORQUE_ALLOC_SIZE = MAX_FLIGHT_CONTROL_MOTOR_NUM;
+  static constexpr size_t MAX_PWM_MOTOR_INFO_SIZE = MAX_THRUSTER_MOTOR_INFO_NUM;
 
   FlightControl flight_control_;
   osMutexId *control_mutex_{ nullptr };
+  ConfigFlashDatabase *config_flash_database_{ nullptr };
 
   rcl_subscription_t flight_config_sub_{};
   rcl_subscription_t uav_info_sub_{};
@@ -74,9 +82,14 @@ private:
   rcl_publisher_t flight_status_pub_{};
   rcl_publisher_t control_term_pub_{};
   rcl_publisher_t control_feedback_state_pub_{};
+  rcl_publisher_t application_capabilities_pub_{};
+  rcl_publisher_t config_flash_status_pub_{};
+  rcl_publisher_t flight_parameter_table_pub_{};
 
   rcl_service_t att_control_srv_{};
   rcl_service_t position_control_srv_{};
+  rcl_service_t parameter_database_srv_{};
+  rcl_service_t config_flash_srv_{};
 
   spinal_msgs__msg__FlightConfigCmd flight_config_msg_{};
   spinal_msgs__msg__UavInfo uav_info_msg_{};
@@ -113,17 +126,27 @@ private:
   spinal_msgs__msg__RollPitchYawTerms control_term_msg_{};
   spinal_msgs__msg__RollPitchYawTerm control_term_buf_[MAX_RPY_TERMS_SIZE]{};
   spinal_msgs__msg__RollPitchYawTerm control_feedback_state_msg_{};
+  spinal_msgs__msg__ApplicationCapabilities application_capabilities_msg_{};
+  spinal_msgs__msg__ConfigFlashStatus config_flash_status_msg_{};
+  spinal_msgs__msg__FlightParameterTable flight_parameter_table_msg_{};
+  spinal_msgs__msg__MotorInfo flight_parameter_pwm_motor_info_buf_[MAX_PWM_MOTOR_INFO_SIZE]{};
   uint32_t last_flight_status_sequence_{ 0U };
   uint32_t last_flight_status_publish_ms_{ 0U };
+  uint32_t last_storage_status_publish_ms_{ 0U };
 
   std_srvs__srv__SetBool_Request att_control_req_{};
   std_srvs__srv__SetBool_Response att_control_res_{};
   std_srvs__srv__SetBool_Request position_control_req_{};
   std_srvs__srv__SetBool_Response position_control_res_{};
+  spinal_msgs__srv__ManageFlightParameters_Request parameter_database_req_{};
+  spinal_msgs__srv__ManageFlightParameters_Response parameter_database_res_{};
+  spinal_msgs__srv__ManageConfigFlash_Request config_flash_req_{};
+  spinal_msgs__srv__ManageConfigFlash_Response config_flash_res_{};
 
   void configure_message_storage_();
   void fillControlTerms_(const FlightControlRpyTerms &src);
   void fillControlFeedback_(const FlightControlRpyTerm &src);
+  void fillConfigFlashStatus_(spinal_msgs__msg__ConfigFlashStatus &msg) const;
 
   void lock_control_();
   void unlock_control_();
@@ -143,6 +166,8 @@ private:
   static void networkHeartbeatCallbackStatic_(const void *msgin);
   static void attitudeControlCallbackStatic_(const void *req_msg, void *res_msg);
   static void positionControlCallbackStatic_(const void *req_msg, void *res_msg);
+  static void parameterDatabaseCallbackStatic_(const void *req_msg, void *res_msg);
+  static void configFlashCallbackStatic_(const void *req_msg, void *res_msg);
 };
 
 #endif  // !SIMULATION

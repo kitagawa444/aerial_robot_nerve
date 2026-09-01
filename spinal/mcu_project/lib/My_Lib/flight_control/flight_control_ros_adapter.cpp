@@ -269,6 +269,152 @@ void fillFlightStatus(FlightStatusMsg &msg, const FlightSupervisorStatus &src)
   msg.takeoff_target_height = src.takeoff_target_height;
 }
 
+void fillFlightParameterTable(FlightParameterTableMsg &msg, const FlightParameterDatabase &database, bool applied,
+                              bool persistent_storage)
+{
+  const FlightParameterPayload &src = database.payload();
+  msg.valid = database.valid();
+  msg.dirty = database.dirty();
+  msg.applied = applied;
+  msg.persistent_storage = persistent_storage;
+  msg.schema_version = database.schemaVersion();
+  msg.generation = database.generation();
+  msg.crc32 = database.crc32();
+  msg.valid_fields = database.validFields();
+  msg.motor_count = src.motor_count;
+  msg.uav_model = src.uav_model;
+  msg.gimbal_dof = src.gimbal_dof;
+  msg.position_control_enabled = src.position_control_enabled != 0U;
+  msg.attitude_control_enabled = src.attitude_control_enabled != 0U;
+
+  msg.pwm.min_pwm = src.pwm.min_pwm;
+  msg.pwm.max_pwm = src.pwm.max_pwm;
+  msg.pwm.min_thrust = src.pwm.min_thrust;
+  msg.pwm.force_landing_thrust = src.pwm.force_landing_thrust;
+  msg.pwm.pwm_conversion_mode = src.pwm.pwm_conversion_mode;
+#ifdef SIMULATION
+  msg.pwm.motor_info.resize(src.pwm.motor_info_count);
+  msg.attitude_gains.motors.resize(src.attitude_gains.motors_count);
+  msg.p_matrix.pseudo_inverse.resize(src.p_matrix.pseudo_inverse_count);
+  msg.torque_allocation.rows.resize(src.torque_allocation.rows_count);
+#else
+  msg.pwm.motor_info.size = src.pwm.motor_info_count;
+  msg.attitude_gains.motors.size = src.attitude_gains.motors_count;
+  msg.p_matrix.pseudo_inverse.size = src.p_matrix.pseudo_inverse_count;
+  msg.torque_allocation.rows.size = src.torque_allocation.rows_count;
+#endif
+  for (size_t i = 0; i < src.pwm.motor_info_count; ++i)
+  {
+    auto &dst = FC_ROS_SEQUENCE_AT(msg.pwm.motor_info, i);
+    dst.voltage = src.pwm.motor_info[i].voltage;
+    dst.max_thrust = src.pwm.motor_info[i].max_thrust;
+    for (size_t coefficient = 0; coefficient < 5U; ++coefficient)
+      dst.polynominal[coefficient] = src.pwm.motor_info[i].polynominal[coefficient];
+  }
+  for (size_t i = 0; i < src.attitude_gains.motors_count; ++i)
+    fillRollPitchYawTerm(FC_ROS_SEQUENCE_AT(msg.attitude_gains.motors, i), src.attitude_gains.motors[i]);
+  for (size_t i = 0; i < src.p_matrix.pseudo_inverse_count; ++i)
+  {
+    auto &dst = FC_ROS_SEQUENCE_AT(msg.p_matrix.pseudo_inverse, i);
+    dst.r = src.p_matrix.pseudo_inverse[i].r;
+    dst.p = src.p_matrix.pseudo_inverse[i].p;
+    dst.y = src.p_matrix.pseudo_inverse[i].y;
+  }
+  for (size_t i = 0; i < 6U; ++i) msg.p_matrix.inertia[i] = src.p_matrix.inertia[i];
+  for (size_t i = 0; i < src.torque_allocation.rows_count; ++i)
+  {
+    auto &dst = FC_ROS_SEQUENCE_AT(msg.torque_allocation.rows, i);
+    dst.x = src.torque_allocation.rows[i].x;
+    dst.y = src.torque_allocation.rows[i].y;
+    dst.z = src.torque_allocation.rows[i].z;
+  }
+  msg.offset_rotation.roll = src.offset_rotation.roll;
+  msg.offset_rotation.pitch = src.offset_rotation.pitch;
+  msg.offset_rotation.yaw = src.offset_rotation.yaw;
+
+  auto &position = msg.position_control;
+  for (size_t axis = 0; axis < 3U; ++axis)
+  {
+    position.position_p[axis] = src.position_control.position_p[axis];
+    position.position_i[axis] = src.position_control.position_i[axis];
+    position.velocity_d[axis] = src.position_control.velocity_d[axis];
+    position.limit_sum[axis] = src.position_control.limit_sum[axis];
+    position.limit_p[axis] = src.position_control.limit_p[axis];
+    position.limit_i[axis] = src.position_control.limit_i[axis];
+    position.limit_d[axis] = src.position_control.limit_d[axis];
+    position.limit_err_p[axis] = src.position_control.limit_err_p[axis];
+    position.limit_err_d[axis] = src.position_control.limit_err_d[axis];
+    position.integral_limit[axis] = src.position_control.integral_limit[axis];
+  }
+  position.yaw_p = src.position_control.yaw_p;
+  position.yaw_i = src.position_control.yaw_i;
+  position.yaw_limit_sum = src.position_control.yaw_limit_sum;
+  position.yaw_limit_err_p = src.position_control.yaw_limit_err_p;
+  position.yaw_limit_err_i = src.position_control.yaw_limit_err_i;
+  position.yaw_limit_err_d = src.position_control.yaw_limit_err_d;
+  position.max_horizontal_acceleration = src.position_control.max_horizontal_acceleration;
+  position.max_vertical_acceleration = src.position_control.max_vertical_acceleration;
+  position.max_tilt_angle = src.position_control.max_tilt_angle;
+#ifdef SIMULATION
+#define RESIZE_POSITION_SEQUENCE(field) position.field.resize(src.position_control.motor_count)
+#else
+#define RESIZE_POSITION_SEQUENCE(field) position.field.size = src.position_control.motor_count
+#endif
+  RESIZE_POSITION_SEQUENCE(vertical_acceleration_to_thrust);
+  RESIZE_POSITION_SEQUENCE(yaw_acceleration_to_thrust);
+  RESIZE_POSITION_SEQUENCE(z_p_gain);
+  RESIZE_POSITION_SEQUENCE(z_i_gain);
+  RESIZE_POSITION_SEQUENCE(z_d_gain);
+  RESIZE_POSITION_SEQUENCE(yaw_p_gain);
+  RESIZE_POSITION_SEQUENCE(yaw_i_gain);
+  RESIZE_POSITION_SEQUENCE(yaw_d_gain);
+#undef RESIZE_POSITION_SEQUENCE
+  for (size_t i = 0; i < src.position_control.motor_count; ++i)
+  {
+    FC_ROS_SEQUENCE_AT(position.vertical_acceleration_to_thrust,
+                       i) = src.position_control.vertical_acceleration_to_thrust[i];
+    FC_ROS_SEQUENCE_AT(position.yaw_acceleration_to_thrust, i) = src.position_control.yaw_acceleration_to_thrust[i];
+    FC_ROS_SEQUENCE_AT(position.z_p_gain, i) = src.position_control.z_p_gain[i];
+    FC_ROS_SEQUENCE_AT(position.z_i_gain, i) = src.position_control.z_i_gain[i];
+    FC_ROS_SEQUENCE_AT(position.z_d_gain, i) = src.position_control.z_d_gain[i];
+    FC_ROS_SEQUENCE_AT(position.yaw_p_gain, i) = src.position_control.yaw_p_gain[i];
+    FC_ROS_SEQUENCE_AT(position.yaw_i_gain, i) = src.position_control.yaw_i_gain[i];
+    FC_ROS_SEQUENCE_AT(position.yaw_d_gain, i) = src.position_control.yaw_d_gain[i];
+  }
+  position.use_lqi_gains = src.position_control.use_lqi_gains;
+  position.yaw_rate_feedback_on_spinal = src.position_control.yaw_rate_feedback_on_spinal;
+  position.start_roll_pitch_integration_height = src.position_control.start_roll_pitch_integration_height;
+  position.landing_err_z = src.position_control.landing_err_z;
+  position.safe_landing_height = src.position_control.safe_landing_height;
+  position.setpoint_timeout_ms = src.position_control.setpoint_timeout_ms;
+  position.rc_max_horizontal_velocity = src.position_control.rc_max_horizontal_velocity;
+  position.rc_max_vertical_velocity = src.position_control.rc_max_vertical_velocity;
+  position.rc_max_yaw_rate = src.position_control.rc_max_yaw_rate;
+  position.rc_deadzone = src.position_control.rc_deadzone;
+  position.rc_timeout_ms = src.position_control.rc_timeout_ms;
+  position.takeoff_height = src.position_control.supervisor.takeoff_height;
+  position.takeoff_position_tolerance = src.position_control.supervisor.takeoff_position_tolerance;
+  position.takeoff_velocity_tolerance = src.position_control.supervisor.takeoff_velocity_tolerance;
+  position.takeoff_stable_time_ms = src.position_control.supervisor.takeoff_stable_time_ms;
+  position.landing_speed = src.position_control.supervisor.landing_speed;
+  position.landed_height = src.position_control.supervisor.landed_height;
+  position.landed_velocity = src.position_control.supervisor.landed_velocity;
+  position.landed_stable_time_ms = src.position_control.supervisor.landed_stable_time_ms;
+  position.rc_authority_timeout_ms = src.position_control.supervisor.rc_authority_timeout_ms;
+
+  msg.health.battery_cell_count = src.health.power.battery_cell_count;
+  msg.health.battery_low_percentage = src.health.power.low_percentage;
+  msg.health.battery_hysteresis_percentage = src.health.power.hysteresis_percentage;
+  msg.health.battery_high_cell_threshold = src.health.power.high_cell_threshold;
+  msg.health.battery_resistance = src.health.power.resistance;
+  msg.health.battery_resistance_voltage_rate = src.health.power.resistance_voltage_rate;
+  msg.health.battery_hovering_current = src.health.power.hovering_current;
+  msg.health.battery_debounce_ms = src.health.power.debounce_ms;
+  msg.health.primary_imu_timeout_ms = src.health.sensor.primary_imu_timeout_ms;
+  msg.health.control_loop_deadline_ms = src.health.compute.control_loop_deadline_ms;
+  msg.health.control_loop_miss_limit = src.health.compute.miss_limit;
+}
+
 }  // namespace flight_control_ros
 
 #undef FC_ROS_SEQUENCE_SIZE

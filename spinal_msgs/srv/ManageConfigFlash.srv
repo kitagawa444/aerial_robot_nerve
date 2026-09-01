@@ -1,0 +1,26 @@
+uint8 STATUS = 0
+uint8 STAGE = 1
+uint8 COMMIT = 2
+uint8 RELOAD = 3
+
+uint8 command
+uint8 uart3_driver
+uint8 imu_driver
+bool barometer_enabled
+uint8 servo_driver
+bool attitude_estimation_enabled
+bool height_estimation_enabled
+bool position_estimation_enabled
+bool flight_control_enabled
+uint8 motor_output_driver
+---
+uint8 RESULT_OK = 0
+uint8 RESULT_INVALID_COMMAND = 1
+uint8 RESULT_ARMED = 2
+uint8 RESULT_UNSUPPORTED = 3
+uint8 RESULT_STORAGE_ERROR = 4
+uint8 RESULT_NO_VALID_CONFIG = 5
+
+bool success
+uint8 result
+spinal_msgs/ConfigFlashStatus status

@@ -13,4 +13,7 @@ void restore_application_boot_address();
 // reset the MCU into the hardware ROM boot path.
 [[noreturn]] void request_and_reset();
 
+// Keep the application boot address selected and perform a normal MCU reset.
+[[noreturn]] void request_application_reset();
+
 }  // namespace SystemBootloader
