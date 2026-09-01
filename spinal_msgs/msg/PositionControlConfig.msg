@@ -36,3 +36,14 @@ float32 rc_max_vertical_velocity
 float32 rc_max_yaw_rate
 float32 rc_deadzone
 uint32 rc_timeout_ms
+
+# FC-owned basic flight phase configuration
+float32 takeoff_height
+float32 takeoff_position_tolerance
+float32 takeoff_velocity_tolerance
+uint32 takeoff_stable_time_ms
+float32 landing_speed
+float32 landed_height
+float32 landed_velocity
+uint32 landed_stable_time_ms
+uint32 rc_authority_timeout_ms

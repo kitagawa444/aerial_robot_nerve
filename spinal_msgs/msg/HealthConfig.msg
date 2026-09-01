@@ -1,0 +1,12 @@
+uint8 battery_cell_count
+float32 battery_low_percentage
+float32 battery_hysteresis_percentage
+float32 battery_high_cell_threshold
+float32 battery_resistance
+float32 battery_resistance_voltage_rate
+float32 battery_hovering_current
+uint32 battery_debounce_ms
+
+uint32 primary_imu_timeout_ms
+uint32 control_loop_deadline_ms
+uint8 control_loop_miss_limit
