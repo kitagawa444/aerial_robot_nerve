@@ -1,0 +1,24 @@
+uint8 BOARD_UNKNOWN = 0
+uint8 BOARD_STM32H7_V2 = 1
+
+uint32 CAP_IMU_ICM20948 = 1
+uint32 CAP_IMU_MPU9250 = 2
+uint32 CAP_BAROMETER = 4
+uint32 CAP_GPS_UART3 = 8
+uint32 CAP_CRSF_UART3 = 16
+uint32 CAP_DYNAMIXEL = 32
+uint32 CAP_KONDO = 64
+uint32 CAP_DSHOT = 128
+uint32 CAP_FLIGHT_CONTROL = 256
+uint32 CAP_POSITION_CONTROL = 512
+uint32 CAP_CONFIG_FLASH_AB = 1024
+uint32 CAP_PWM = 2048
+uint32 CAP_ATTITUDE_ESTIMATION = 4096
+uint32 CAP_HEIGHT_ESTIMATION = 8192
+uint32 CAP_POSITION_ESTIMATION = 16384
+
+uint8 board
+uint32 capability_mask
+uint8 max_motor_count
+uint16 config_schema_version
+uint16 flight_parameter_schema_version

@@ -1,0 +1,22 @@
+bool valid
+bool dirty
+bool applied
+bool persistent_storage
+uint16 schema_version
+uint32 generation
+uint32 crc32
+uint32 valid_fields
+
+uint8 motor_count
+int8 uav_model
+uint8 gimbal_dof
+bool position_control_enabled
+bool attitude_control_enabled
+
+spinal_msgs/PwmInfo pwm
+spinal_msgs/RollPitchYawTerms attitude_gains
+spinal_msgs/PMatrixPseudoInverseWithInertia p_matrix
+spinal_msgs/TorqueAllocationMatrixInv torque_allocation
+spinal_msgs/DesireCoord offset_rotation
+spinal_msgs/PositionControlConfig position_control
+spinal_msgs/HealthConfig health
