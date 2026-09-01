@@ -12,8 +12,11 @@
 #include <rclcpp_lifecycle/lifecycle_publisher.hpp>
 #include <sensor_msgs/msg/joint_state.hpp>
 #include <spinal_msgs/msg/desire_coord.hpp>
+#include <spinal_msgs/msg/application_capabilities.hpp>
+#include <spinal_msgs/msg/config_flash_status.hpp>
 #include <spinal_msgs/msg/flight_config_cmd.hpp>
 #include <spinal_msgs/msg/flight_status.hpp>
+#include <spinal_msgs/msg/flight_parameter_table.hpp>
 #include <spinal_msgs/msg/four_axis_command.hpp>
 #include <spinal_msgs/msg/health_config.hpp>
 #include <spinal_msgs/msg/p_matrix_pseudo_inverse_with_inertia.hpp>
@@ -28,8 +31,13 @@
 #include <std_msgs/msg/empty.hpp>
 #include <std_msgs/msg/u_int8.hpp>
 #include <std_srvs/srv/set_bool.hpp>
+#include <std_srvs/srv/trigger.hpp>
+#include <spinal_msgs/srv/manage_flight_parameters.hpp>
+#include <spinal_msgs/srv/manage_config_flash.hpp>
 
 #include "flight_control/flight_control.h"
+#include "flashmemory/config_flash_database.h"
+#include "flashmemory/config_flash_storage_sim.h"
 #include "rc/simulation/crsf_ros_module.h"
 #include "state_estimate/state_estimate.h"
 #include "thruster/simulation/thruster_manager.h"
@@ -53,8 +61,11 @@ public:
 private:
   std::shared_ptr<rclcpp_lifecycle::LifecycleNode> node_;
   FlightControl flight_control_;
+  ConfigFlashDatabase config_flash_database_;
+  ConfigFlashStorageSim config_flash_storage_;
   CrsfRosModuleSim crsf_ros_module_;
   ThrusterManager *thruster_{ nullptr };
+  StateEstimate *estimator_{ nullptr };
   bool initialized_{ false };
 
   rclcpp::Subscription<spinal_msgs::msg::FlightConfigCmd>::SharedPtr flight_config_sub_;
@@ -77,12 +88,20 @@ private:
   rclcpp_lifecycle::LifecyclePublisher<spinal_msgs::msg::RollPitchYawTerm>::SharedPtr control_feedback_state_pub_;
   rclcpp_lifecycle::LifecyclePublisher<std_msgs::msg::Float32MultiArray>::SharedPtr gyro_moment_pub_;
   rclcpp_lifecycle::LifecyclePublisher<sensor_msgs::msg::JointState>::SharedPtr gimbal_control_pub_;
+  rclcpp_lifecycle::LifecyclePublisher<spinal_msgs::msg::ApplicationCapabilities>::SharedPtr
+      application_capabilities_pub_;
+  rclcpp_lifecycle::LifecyclePublisher<spinal_msgs::msg::ConfigFlashStatus>::SharedPtr config_flash_status_pub_;
+  rclcpp_lifecycle::LifecyclePublisher<spinal_msgs::msg::FlightParameterTable>::SharedPtr flight_parameter_table_pub_;
 
   rclcpp::Service<std_srvs::srv::SetBool>::SharedPtr att_control_srv_;
   rclcpp::Service<std_srvs::srv::SetBool>::SharedPtr position_control_srv_;
+  rclcpp::Service<spinal_msgs::srv::ManageFlightParameters>::SharedPtr parameter_database_srv_;
+  rclcpp::Service<spinal_msgs::srv::ManageConfigFlash>::SharedPtr config_flash_srv_;
+  rclcpp::Service<std_srvs::srv::Trigger>::SharedPtr reboot_srv_;
   std::mutex control_mutex_;
   uint32_t last_flight_status_sequence_{ 0U };
   rclcpp::Time last_flight_status_publish_time_{};
+  rclcpp::Time last_storage_status_publish_time_{};
 
   void configureRosIo_();
   void flightConfigCallback_(const spinal_msgs::msg::FlightConfigCmd::SharedPtr msg);
@@ -102,6 +121,13 @@ private:
                                 std::shared_ptr<std_srvs::srv::SetBool::Response> res);
   void positionControlCallback_(const std::shared_ptr<std_srvs::srv::SetBool::Request> req,
                                 std::shared_ptr<std_srvs::srv::SetBool::Response> res);
+  void parameterDatabaseCallback_(const std::shared_ptr<spinal_msgs::srv::ManageFlightParameters::Request> req,
+                                  std::shared_ptr<spinal_msgs::srv::ManageFlightParameters::Response> res);
+  void configFlashCallback_(const std::shared_ptr<spinal_msgs::srv::ManageConfigFlash::Request> req,
+                            std::shared_ptr<spinal_msgs::srv::ManageConfigFlash::Response> res);
+  void rebootCallback_(const std::shared_ptr<std_srvs::srv::Trigger::Request> req,
+                       std::shared_ptr<std_srvs::srv::Trigger::Response> res);
+  void fillConfigFlashStatus_(spinal_msgs::msg::ConfigFlashStatus &msg) const;
 };
 
 #endif  // SIMULATION

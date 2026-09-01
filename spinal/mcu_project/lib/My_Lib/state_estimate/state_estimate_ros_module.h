@@ -20,10 +20,11 @@ public:
   {
   }
 
-  void init_hw(IMU *imu, Baro *baro, GPS *gps, osMutexId *state_mutex = nullptr)
+  void init_hw(IMU *imu, Baro *baro, GPS *gps, osMutexId *state_mutex = nullptr, bool attitude_enabled = true,
+               bool height_enabled = true, bool position_enabled = true)
   {
     state_mutex_ = state_mutex;
-    estimator_.init(imu, baro, gps);
+    estimator_.init(imu, baro, gps, attitude_enabled, height_enabled, position_enabled);
   }
 
   void create_entities(rcl_node_t &node) override;

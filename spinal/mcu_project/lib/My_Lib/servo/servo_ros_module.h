@@ -24,20 +24,16 @@ class DirectServoRosModule final : public RosModuleBase
 {
 public:
   DirectServoRosModule()
-  : RosModuleBase(
-      RosModuleEntityCapacity()
-        .max_subscriptions(3)
-        .max_publishers(2)
-        .max_services(2)
-        .max_timers(0))
-  {}
+    : RosModuleBase(RosModuleEntityCapacity().max_subscriptions(3).max_publishers(2).max_services(2).max_timers(0))
+  {
+  }
 
-  bool init_hw(UART_HandleTypeDef* huart, osMutexId* mutex = nullptr);
+  bool init_hw(UART_HandleTypeDef *huart, osMutexId *mutex = nullptr, uint8_t driver = ServoDriver::DRIVER_DYNAMIXEL);
 
-  DirectServo* getServoCore() { return &servo_; }
+  DirectServo *getServoCore() { return &servo_; }
   bool connected() const { return servo_.connected(); }
 
-  void create_entities(rcl_node_t& node) override;
+  void create_entities(rcl_node_t &node) override;
   void update() override;
   void publish() override;
 
@@ -87,10 +83,10 @@ private:
   void fillServoTorqueStates_();
   void fillBoardInfo_();
 
-  static DirectServoRosModule* instance_;
-  static void servoControlCallbackStatic_(const void* msgin);
-  static void servoTorqueControlCallbackStatic_(const void* msgin);
-  static void jointProfilesCallbackStatic_(const void* msgin);
-  static void servoConfigCallbackStatic_(const void* req_msg, void* res_msg);
-  static void boardInfoCallbackStatic_(const void* req_msg, void* res_msg);
+  static DirectServoRosModule *instance_;
+  static void servoControlCallbackStatic_(const void *msgin);
+  static void servoTorqueControlCallbackStatic_(const void *msgin);
+  static void jointProfilesCallbackStatic_(const void *msgin);
+  static void servoConfigCallbackStatic_(const void *req_msg, void *res_msg);
+  static void boardInfoCallbackStatic_(const void *req_msg, void *res_msg);
 };

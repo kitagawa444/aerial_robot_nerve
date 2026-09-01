@@ -6,6 +6,7 @@
 
 #include <spinal_msgs/msg/desire_coord.hpp>
 #include <spinal_msgs/msg/flight_status.hpp>
+#include <spinal_msgs/msg/flight_parameter_table.hpp>
 #include <spinal_msgs/msg/health_config.hpp>
 #include <spinal_msgs/msg/four_axis_command.hpp>
 #include <spinal_msgs/msg/p_matrix_pseudo_inverse_with_inertia.hpp>
@@ -19,6 +20,7 @@
 
 #include <spinal_msgs/msg/desire_coord.h>
 #include <spinal_msgs/msg/flight_status.h>
+#include <spinal_msgs/msg/flight_parameter_table.h>
 #include <spinal_msgs/msg/health_config.h>
 #include <spinal_msgs/msg/four_axis_command.h>
 #include <spinal_msgs/msg/p_matrix_pseudo_inverse_with_inertia.h>
@@ -44,6 +46,7 @@ using PositionControlConfigMsg = spinal_msgs::msg::PositionControlConfig;
 using PositionControlSetpointMsg = spinal_msgs::msg::PositionControlSetpoint;
 using FlightStatusMsg = spinal_msgs::msg::FlightStatus;
 using HealthConfigMsg = spinal_msgs::msg::HealthConfig;
+using FlightParameterTableMsg = spinal_msgs::msg::FlightParameterTable;
 #else
 using FourAxisCommandMsg = spinal_msgs__msg__FourAxisCommand;
 using RollPitchYawTermMsg = spinal_msgs__msg__RollPitchYawTerm;
@@ -55,6 +58,7 @@ using PositionControlConfigMsg = spinal_msgs__msg__PositionControlConfig;
 using PositionControlSetpointMsg = spinal_msgs__msg__PositionControlSetpoint;
 using FlightStatusMsg = spinal_msgs__msg__FlightStatus;
 using HealthConfigMsg = spinal_msgs__msg__HealthConfig;
+using FlightParameterTableMsg = spinal_msgs__msg__FlightParameterTable;
 #endif
 
 bool applyFourAxisCommand(FlightControl &flight_control, const FourAxisCommandMsg &msg);
@@ -68,5 +72,7 @@ bool applyPositionControlSetpoint(FlightControl &flight_control, const PositionC
 
 void fillRollPitchYawTerm(RollPitchYawTermMsg &msg, const FlightControlRpyTerm &src);
 void fillFlightStatus(FlightStatusMsg &msg, const FlightSupervisorStatus &src);
+void fillFlightParameterTable(FlightParameterTableMsg &msg, const FlightParameterDatabase &database, bool applied,
+                              bool persistent_storage);
 
 }  // namespace flight_control_ros

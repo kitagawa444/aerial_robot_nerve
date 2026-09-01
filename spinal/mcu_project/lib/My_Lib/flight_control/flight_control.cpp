@@ -37,6 +37,7 @@ void FlightControl::init(StateEstimate *estimator, ThrusterManager *thruster,
   position_controller_.setEnabled(false);
   supervisor_.reset();
   start_control_flag_ = false;
+  enabled_ = true;
   force_landing_flag_ = false;
   gimbal_set_flag_ = false;
   config_ack_pending_ = false;
@@ -59,10 +60,30 @@ void FlightControl::init(StateEstimate *estimator, ThrusterManager *thruster,
   control_loop_sequence_ = 0U;
   observed_imu_timestamp_ms_ = 0U;
   last_imu_activity_ms_ = 0U;
+  parameters_applied_ = false;
+  rpy_gains_cached_ = false;
+  p_matrix_cached_ = false;
+  torque_allocation_cached_ = false;
+  offset_rotation_cached_ = false;
+  health_config_cached_ = false;
+
+  loadParameterDatabase();
 }
 
 void FlightControl::update()
 {
+  if (!enabled_)
+  {
+    start_control_flag_ = false;
+    force_landing_flag_ = false;
+    if (thruster_ != nullptr)
+    {
+      const float zero_thrust = 0.0f;
+      (void)thruster_->outputThrust(&zero_thrust, 0U, false);
+    }
+    return;
+  }
+
   updateRuntimeHealthFacts_();
   updateLinkStates_();
   supervisor_.update(supervisorInput_());
@@ -127,6 +148,7 @@ bool FlightControl::applyFlightConfig(uint8_t command)
 
 bool FlightControl::requestFlightCommand(uint8_t command, uint8_t source)
 {
+  if (!enabled_) return false;
   if (command == FlightControlCommand::INTEGRATION_CONTROL_ON_CMD)
   {
     att_controller_.setIntegrateFlag(true);
@@ -193,6 +215,7 @@ void FlightControl::applyUavInfo(uint8_t motor_num, int8_t uav_model)
   }
 
   configureMotorCount_();
+  refreshParameterStage_();
 }
 
 void FlightControl::applyGimbalDof(uint8_t gimbal_dof)
@@ -203,6 +226,7 @@ void FlightControl::applyGimbalDof(uint8_t gimbal_dof)
     att_controller_.setRotorCoef(gimbal_dof + 1);
     gimbal_set_flag_ = true;
     configureMotorCount_();
+    refreshParameterStage_();
   }
 }
 
@@ -220,10 +244,18 @@ bool FlightControl::applyPositionControlConfig(const PositionControlConfig &conf
   if (!supervisor_.configure(config.supervisor)) return false;
   if (!position_controller_.configure(config)) return false;
   position_control_config_ = config;
+  refreshParameterStage_();
   return true;
 }
 
-bool FlightControl::applyHealthConfig(const HealthManagerConfig &config) { return supervisor_.configureHealth(config); }
+bool FlightControl::applyHealthConfig(const HealthManagerConfig &config)
+{
+  if (!supervisor_.configureHealth(config)) return false;
+  health_config_ = config;
+  health_config_cached_ = true;
+  refreshParameterStage_();
+  return true;
+}
 
 bool FlightControl::applyPositionControlSetpoint(const PositionControlSetpoint &setpoint)
 {
@@ -272,6 +304,7 @@ void FlightControl::setPositionControlEnabled(bool enabled)
 {
   if (start_control_flag_) return;
   position_controller_.setEnabled(enabled);
+  refreshParameterStage_();
 }
 
 bool FlightControl::positionControlStateValid() const
@@ -501,24 +534,146 @@ void FlightControl::updateManagedSetpoint_()
   managed_setpoint_update_ms_ = now_ms;
 }
 
-bool FlightControl::applyRpyGains(const FlightControlRpyTerms &gains) { return att_controller_.applyRpyGains(gains); }
+bool FlightControl::applyRpyGains(const FlightControlRpyTerms &gains)
+{
+  if (!att_controller_.applyRpyGains(gains)) return false;
+  rpy_gains_config_ = gains;
+  rpy_gains_cached_ = true;
+  refreshParameterStage_();
+  return true;
+}
 
 bool FlightControl::applyPMatrixInertia(const FlightControlPMatrixPseudoInverseWithInertia &msg)
 {
-  return att_controller_.applyPMatrixInertia(msg);
+  if (!att_controller_.applyPMatrixInertia(msg)) return false;
+  p_matrix_config_ = msg;
+  p_matrix_cached_ = true;
+  refreshParameterStage_();
+  return true;
 }
 
 bool FlightControl::applyTorqueAllocationMatrixInv(const FlightControlTorqueAllocationMatrixInv &msg)
 {
-  return att_controller_.applyTorqueAllocationMatrixInv(msg);
+  if (!att_controller_.applyTorqueAllocationMatrixInv(msg)) return false;
+  torque_allocation_config_ = msg;
+  torque_allocation_cached_ = true;
+  refreshParameterStage_();
+  return true;
 }
 
 void FlightControl::applyOffsetRotation(const FlightControlDesireCoord &msg)
 {
   att_controller_.applyOffsetRotation(msg);
+  offset_rotation_config_ = msg;
+  offset_rotation_cached_ = true;
+  refreshParameterStage_();
 }
 
-void FlightControl::setAttitudeControlFlag(bool flag) { att_controller_.setAttitudeControlFlag(flag); }
+void FlightControl::setAttitudeControlFlag(bool flag)
+{
+  att_controller_.setAttitudeControlFlag(flag);
+  refreshParameterStage_();
+}
+
+void FlightControl::loadParameterDatabase()
+{
+  parameter_database_.load();
+  parameters_applied_ = parameter_database_.valid() && applyStoredParameters_();
+}
+
+bool FlightControl::prepareParameterCommit()
+{
+  if (supervisor_.status().arming_state == FlightArmingState::ARMED) return false;
+  refreshParameterStage_();
+  if (!parameter_database_.prepareCommit()) return false;
+  parameters_applied_ = true;
+  return true;
+}
+
+bool FlightControl::reloadParameterDatabase()
+{
+  if (supervisor_.status().arming_state == FlightArmingState::ARMED) return false;
+  loadParameterDatabase();
+  return parameters_applied_;
+}
+
+void FlightControl::refreshParameterStage_()
+{
+  FlightParameterPayload payload;
+  payload.position_control_enabled = position_controller_.enabled() ? 1U : 0U;
+  payload.attitude_control_enabled = att_controller_.getAttitudeControlFlag() ? 1U : 0U;
+
+  if (physical_motor_count_ > 0U && att_controller_.getUavModel() >= FlightControlUavModel::DRONE)
+  {
+    payload.valid_fields |= FlightParameterField::AIRFRAME;
+    payload.motor_count = physical_motor_count_;
+    payload.uav_model = att_controller_.getUavModel();
+    payload.gimbal_dof = att_controller_.getGimbalDof();
+  }
+
+  if (thruster_ != nullptr && thruster_->getPwmInfo(payload.pwm)) payload.valid_fields |= FlightParameterField::PWM;
+  if (rpy_gains_cached_)
+  {
+    payload.valid_fields |= FlightParameterField::ATTITUDE_GAINS;
+    payload.attitude_gains = rpy_gains_config_;
+  }
+  if (p_matrix_cached_)
+  {
+    payload.valid_fields |= FlightParameterField::P_MATRIX;
+    payload.p_matrix = p_matrix_config_;
+  }
+  if (torque_allocation_cached_)
+  {
+    payload.valid_fields |= FlightParameterField::TORQUE_ALLOCATION;
+    payload.torque_allocation = torque_allocation_config_;
+  }
+  if (offset_rotation_cached_)
+  {
+    payload.valid_fields |= FlightParameterField::OFFSET_ROTATION;
+    payload.offset_rotation = offset_rotation_config_;
+  }
+  if (position_controller_.configured())
+  {
+    payload.valid_fields |= FlightParameterField::POSITION_CONTROL;
+    payload.position_control = position_control_config_;
+  }
+  if (health_config_cached_)
+  {
+    payload.valid_fields |= FlightParameterField::HEALTH;
+    payload.health = health_config_;
+  }
+
+  (void)parameter_database_.stage(payload);
+}
+
+bool FlightControl::applyStoredParameters_()
+{
+  if (!parameter_database_.valid()) return false;
+  const FlightParameterPayload payload = parameter_database_.payload();
+  bool success = true;
+
+  applyUavInfo(payload.motor_count, payload.uav_model);
+  if (payload.gimbal_dof > 0U) applyGimbalDof(payload.gimbal_dof);
+  if (thruster_ == nullptr || !thruster_->applyPwmInfo(payload.pwm)) success = false;
+  if ((payload.valid_fields & FlightParameterField::P_MATRIX) != 0U && !applyPMatrixInertia(payload.p_matrix))
+    success = false;
+  if ((payload.valid_fields & FlightParameterField::TORQUE_ALLOCATION) != 0U &&
+      !applyTorqueAllocationMatrixInv(payload.torque_allocation))
+    success = false;
+  if (!applyRpyGains(payload.attitude_gains)) success = false;
+  if ((payload.valid_fields & FlightParameterField::OFFSET_ROTATION) != 0U)
+    applyOffsetRotation(payload.offset_rotation);
+  if ((payload.valid_fields & FlightParameterField::POSITION_CONTROL) != 0U &&
+      !applyPositionControlConfig(payload.position_control))
+    success = false;
+  if ((payload.valid_fields & FlightParameterField::HEALTH) != 0U && !applyHealthConfig(payload.health))
+    success = false;
+
+  setAttitudeControlFlag(payload.attitude_control_enabled != 0U);
+  setPositionControlEnabled(payload.position_control_enabled != 0U);
+  refreshParameterStage_();
+  return success;
+}
 
 bool FlightControl::consumeConfigAck(uint8_t &ack)
 {

@@ -7,9 +7,17 @@
 
 #include "math/AP_Math.h"
 
-ThrusterManager::ThrusterManager()
+ThrusterManager::ThrusterManager() { clearTargets_(); }
+
+void ThrusterManager::setOutputEnabled(bool enabled)
 {
-  clearTargets_();
+  output_enabled_ = enabled;
+  if (!output_enabled_)
+  {
+    start_control_flag_ = false;
+    pwm_test_flag_ = false;
+    clearTargets_();
+  }
 }
 
 void ThrusterManager::setMotorNumber(uint16_t motor_number)
@@ -17,7 +25,7 @@ void ThrusterManager::setMotorNumber(uint16_t motor_number)
   motor_number_ = motor_number > MAX_THRUSTER_NUM ? MAX_THRUSTER_NUM : motor_number;
 }
 
-bool ThrusterManager::applyPwmInfo(const ThrusterPwmInfo& info)
+bool ThrusterManager::applyPwmInfo(const ThrusterPwmInfo &info)
 {
   force_landing_thrust_ = info.force_landing_thrust;
 
@@ -27,15 +35,21 @@ bool ThrusterManager::applyPwmInfo(const ThrusterPwmInfo& info)
   min_thrust_ = info.min_thrust;
 
   motor_info_count_ = info.motor_info_count;
-  if (motor_info_count_ > MAX_THRUSTER_MOTOR_INFO_NUM) {
+  if (motor_info_count_ > MAX_THRUSTER_MOTOR_INFO_NUM)
+  {
     motor_info_count_ = MAX_THRUSTER_MOTOR_INFO_NUM;
   }
 
-  for (size_t i = 0; i < motor_info_count_; ++i) {
+  for (size_t i = 0; i < motor_info_count_; ++i)
+  {
     motor_info_[i] = info.motor_info[i];
   }
 
-  if (sim_voltage_ == 0.0f && motor_info_count_ > 0) {
+  pwm_info_ = info;
+  pwm_info_.motor_info_count = motor_info_count_;
+
+  if (sim_voltage_ == 0.0f && motor_info_count_ > 0)
+  {
     sim_voltage_ = motor_info_[0].voltage;
   }
 
@@ -46,75 +60,111 @@ bool ThrusterManager::applyPwmInfo(const ThrusterPwmInfo& info)
   return configured();
 }
 
-void ThrusterManager::applyPwmTest(const ThrusterPwmTestCommand& cmd)
+bool ThrusterManager::getPwmInfo(ThrusterPwmInfo &info) const
 {
+  if (!configured()) return false;
+  info = pwm_info_;
+  return true;
+}
+
+void ThrusterManager::applyPwmTest(const ThrusterPwmTestCommand &cmd)
+{
+  if (!output_enabled_) return;
   if (start_control_flag_) return;
   if (cmd.motor_index_count && cmd.motor_index_count != cmd.pwms_count) return;
 
-  if (cmd.pwms_count && !pwm_test_flag_) {
+  if (cmd.pwms_count && !pwm_test_flag_)
+  {
     pwm_test_flag_ = true;
-  } else if (!cmd.pwms_count && pwm_test_flag_) {
+  }
+  else if (!cmd.pwms_count && pwm_test_flag_)
+  {
     pwm_test_flag_ = false;
     clearTargets_();
     return;
   }
 
-  if (cmd.motor_index_count) {
+  if (cmd.motor_index_count)
+  {
     uint16_t motor_number = motor_number_;
-    for (size_t i = 0; i < cmd.motor_index_count; ++i) {
+    for (size_t i = 0; i < cmd.motor_index_count; ++i)
+    {
       const uint8_t motor_index = cmd.motor_index[i];
       if (motor_index >= MAX_THRUSTER_NUM) continue;
-      if (motor_number <= motor_index) {
+      if (motor_number <= motor_index)
+      {
         motor_number = motor_index + 1;
       }
 
-      if (cmd.pwms[i] >= ThrusterConstants::IDLE_DUTY && cmd.pwms[i] <= ThrusterConstants::MAX_PWM) {
+      if (cmd.pwms[i] >= ThrusterConstants::IDLE_DUTY && cmd.pwms[i] <= ThrusterConstants::MAX_PWM)
+      {
         pwm_test_value_[motor_index] = cmd.pwms[i];
-      } else {
+      }
+      else
+      {
         pwm_test_value_[motor_index] = ThrusterConstants::IDLE_DUTY;
       }
     }
     setMotorNumber(motor_number);
-  } else if (cmd.pwms_count) {
+  }
+  else if (cmd.pwms_count)
+  {
     const float pwm = cmd.pwms[0];
-    if (motor_number_ == 0) {
+    if (motor_number_ == 0)
+    {
       setMotorNumber(MAX_THRUSTER_NUM);
     }
-    for (size_t i = 0; i < MAX_THRUSTER_NUM; ++i) {
-      if (pwm >= ThrusterConstants::IDLE_DUTY && pwm <= ThrusterConstants::MAX_PWM) {
+    for (size_t i = 0; i < MAX_THRUSTER_NUM; ++i)
+    {
+      if (pwm >= ThrusterConstants::IDLE_DUTY && pwm <= ThrusterConstants::MAX_PWM)
+      {
         pwm_test_value_[i] = pwm;
-      } else {
+      }
+      else
+      {
         pwm_test_value_[i] = ThrusterConstants::IDLE_DUTY;
       }
     }
   }
 }
 
-bool ThrusterManager::outputThrust(const float* target_thrust, size_t motor_count, bool start_control)
+bool ThrusterManager::outputThrust(const float *target_thrust, size_t motor_count, bool start_control)
 {
+  if (!output_enabled_)
+  {
+    start_control_flag_ = false;
+    clearTargets_();
+    return false;
+  }
   start_control_flag_ = start_control;
   if (target_thrust == nullptr) return false;
 
   const size_t n = (motor_count > MAX_THRUSTER_NUM) ? MAX_THRUSTER_NUM : motor_count;
   setMotorNumber(static_cast<uint16_t>(n));
 
-  if (start_control_flag_ && pwm_test_flag_) {
+  if (start_control_flag_ && pwm_test_flag_)
+  {
     pwm_test_flag_ = false;
-    for (size_t i = 0; i < MAX_THRUSTER_NUM; ++i) {
+    for (size_t i = 0; i < MAX_THRUSTER_NUM; ++i)
+    {
       pwm_test_value_[i] = ThrusterConstants::IDLE_DUTY;
     }
   }
 
-  if (!start_control_flag_ && pwm_test_flag_) {
-    for (size_t i = 0; i < MAX_THRUSTER_NUM; ++i) {
+  if (!start_control_flag_ && pwm_test_flag_)
+  {
+    for (size_t i = 0; i < MAX_THRUSTER_NUM; ++i)
+    {
       target_pwm_[i] = pwm_test_value_[i];
       target_thrust_[i] = 0.0f;
     }
     return true;
   }
 
-  if (!start_control_flag_) {
-    for (size_t i = 0; i < MAX_THRUSTER_NUM; ++i) {
+  if (!start_control_flag_)
+  {
+    for (size_t i = 0; i < MAX_THRUSTER_NUM; ++i)
+    {
       target_thrust_[i] = 0.0f;
       target_pwm_[i] = ThrusterConstants::IDLE_DUTY;
     }
@@ -125,18 +175,23 @@ bool ThrusterManager::outputThrust(const float* target_thrust, size_t motor_coun
 
   updateVoltageFactor_();
 
-  for (size_t i = 0; i < n; ++i) {
+  for (size_t i = 0; i < n; ++i)
+  {
     target_thrust_[i] = target_thrust[i];
     target_pwm_[i] = convertThrustToDuty_(target_thrust_[i]);
 
-    if (target_pwm_[i] < min_duty_) {
+    if (target_pwm_[i] < min_duty_)
+    {
       target_pwm_[i] = min_duty_;
-    } else if (target_pwm_[i] > max_duty_) {
+    }
+    else if (target_pwm_[i] > max_duty_)
+    {
       target_pwm_[i] = max_duty_;
     }
   }
 
-  for (size_t i = n; i < MAX_THRUSTER_NUM; ++i) {
+  for (size_t i = n; i < MAX_THRUSTER_NUM; ++i)
+  {
     target_thrust_[i] = 0.0f;
     target_pwm_[i] = ThrusterConstants::IDLE_DUTY;
   }
@@ -144,23 +199,26 @@ bool ThrusterManager::outputThrust(const float* target_thrust, size_t motor_coun
   return true;
 }
 
-void ThrusterManager::writeDuty(const float* target_duty, size_t motor_count)
+void ThrusterManager::writeDuty(const float *target_duty, size_t motor_count)
 {
   if (target_duty == nullptr) return;
 
   const size_t n = (motor_count > MAX_THRUSTER_NUM) ? MAX_THRUSTER_NUM : motor_count;
   setMotorNumber(static_cast<uint16_t>(n));
 
-  for (size_t i = 0; i < n; ++i) {
+  for (size_t i = 0; i < n; ++i)
+  {
     target_pwm_[i] = target_duty[i];
   }
 }
 
 void ThrusterManager::sendCommand()
 {
+  if (!output_enabled_) return;
   if (!pwm_test_flag_ || start_control_flag_) return;
 
-  for (size_t i = 0; i < MAX_THRUSTER_NUM; ++i) {
+  for (size_t i = 0; i < MAX_THRUSTER_NUM; ++i)
+  {
     target_pwm_[i] = pwm_test_value_[i];
     target_thrust_[i] = 0.0f;
   }
@@ -195,7 +253,8 @@ ThrusterControlLimits ThrusterManager::getControlLimits()
   if (!limits.configured || motor_info_count_ == 0) return limits;
 
   updateVoltageFactor_();
-  if (v_factor_ > 0.0f) {
+  if (v_factor_ > 0.0f)
+  {
     limits.max_thrust = motor_info_[motor_ref_index_].max_thrust / v_factor_;
   }
 
@@ -207,7 +266,8 @@ bool ThrusterManager::motorPwmPublishReady(bool update_last_time)
   const uint32_t now = nowMillis_();
   if (now - pwm_pub_last_time_ <= ThrusterConstants::PWM_PUB_INTERVAL_MS) return false;
 
-  if (update_last_time) {
+  if (update_last_time)
+  {
     pwm_pub_last_time_ = now;
   }
   return true;
@@ -225,26 +285,26 @@ float ThrusterManager::convertThrustToDuty_(float target_thrust) const
   float target_pwm = 0.0f;
   if (scaled_thrust < 0.0f) scaled_thrust = 0.0f;
 
-  switch (pwm_conversion_mode_) {
-    case ThrusterPwmConversionMode::SQRT_MODE:
-    {
-      const float sqrt_tmp =
-        motor_info_[motor_ref_index_].polynominal[1] * motor_info_[motor_ref_index_].polynominal[1] -
-        4.0f * 10.0f * motor_info_[motor_ref_index_].polynominal[2] *
-        (motor_info_[motor_ref_index_].polynominal[0] - scaled_thrust);
-      if (sqrt_tmp > 0.0f) {
-        target_pwm =
-          (-motor_info_[motor_ref_index_].polynominal[1] + sqrt_tmp * ap::inv_sqrt(sqrt_tmp)) /
-          (2.0f * motor_info_[motor_ref_index_].polynominal[2]);
+  switch (pwm_conversion_mode_)
+  {
+    case ThrusterPwmConversionMode::SQRT_MODE: {
+      const float sqrt_tmp = motor_info_[motor_ref_index_].polynominal[1] *
+                                 motor_info_[motor_ref_index_].polynominal[1] -
+                             4.0f * 10.0f * motor_info_[motor_ref_index_].polynominal[2] *
+                                 (motor_info_[motor_ref_index_].polynominal[0] - scaled_thrust);
+      if (sqrt_tmp > 0.0f)
+      {
+        target_pwm = (-motor_info_[motor_ref_index_].polynominal[1] + sqrt_tmp * ap::inv_sqrt(sqrt_tmp)) /
+                     (2.0f * motor_info_[motor_ref_index_].polynominal[2]);
       }
       break;
     }
-    case ThrusterPwmConversionMode::POLYNOMINAL_MODE:
-    {
+    case ThrusterPwmConversionMode::POLYNOMINAL_MODE: {
       const float tenth_scaled_thrust = scaled_thrust * 0.1f;
       constexpr int max_dimenstional = 4;
       target_pwm = motor_info_[motor_ref_index_].polynominal[max_dimenstional];
-      for (int j = max_dimenstional - 1; j >= 0; j--) {
+      for (int j = max_dimenstional - 1; j >= 0; j--)
+      {
         target_pwm = target_pwm * tenth_scaled_thrust + motor_info_[motor_ref_index_].polynominal[j];
       }
       break;
@@ -265,18 +325,20 @@ void ThrusterManager::updateVoltageFactor_()
   if (voltage <= 0.0f) return;
 
   float min_voltage_diff = 1e6f;
-  for (size_t i = 0; i < motor_info_count_; ++i) {
+  for (size_t i = 0; i < motor_info_count_; ++i)
+  {
     const float voltage_diff = fabsf(voltage - motor_info_[i].voltage);
-    if (min_voltage_diff > voltage_diff) {
+    if (min_voltage_diff > voltage_diff)
+    {
       motor_ref_index_ = static_cast<uint8_t>(i);
       min_voltage_diff = voltage_diff;
     }
   }
 
-  switch (pwm_conversion_mode_) {
+  switch (pwm_conversion_mode_)
+  {
     case ThrusterPwmConversionMode::SQRT_MODE:
-      v_factor_ = (motor_info_[motor_ref_index_].voltage / voltage) *
-                  (motor_info_[motor_ref_index_].voltage / voltage);
+      v_factor_ = (motor_info_[motor_ref_index_].voltage / voltage) * (motor_info_[motor_ref_index_].voltage / voltage);
       break;
     case ThrusterPwmConversionMode::POLYNOMINAL_MODE:
       v_factor_ = motor_info_[motor_ref_index_].voltage / voltage *
@@ -286,7 +348,8 @@ void ThrusterManager::updateVoltageFactor_()
       break;
   }
 
-  if (min_thrust_ > 0.0f) {
+  if (min_thrust_ > 0.0f)
+  {
     min_duty_ = convertThrustToDuty_(min_thrust_);
   }
 
@@ -295,11 +358,13 @@ void ThrusterManager::updateVoltageFactor_()
 
 float ThrusterManager::currentVoltage_() const
 {
-  if (sim_voltage_ > 0.0f) {
+  if (sim_voltage_ > 0.0f)
+  {
     return sim_voltage_;
   }
 
-  if (motor_info_count_ > 0) {
+  if (motor_info_count_ > 0)
+  {
     return motor_info_[0].voltage;
   }
 
@@ -308,7 +373,8 @@ float ThrusterManager::currentVoltage_() const
 
 void ThrusterManager::clearTargets_()
 {
-  for (size_t i = 0; i < MAX_THRUSTER_NUM; ++i) {
+  for (size_t i = 0; i < MAX_THRUSTER_NUM; ++i)
+  {
     target_thrust_[i] = 0.0f;
     target_pwm_[i] = ThrusterConstants::IDLE_DUTY;
     pwm_test_value_[i] = ThrusterConstants::IDLE_DUTY;
@@ -319,8 +385,7 @@ uint32_t ThrusterManager::nowMillis_() const
 {
   using Clock = std::chrono::steady_clock;
   const auto now = Clock::now().time_since_epoch();
-  return static_cast<uint32_t>(
-    std::chrono::duration_cast<std::chrono::milliseconds>(now).count());
+  return static_cast<uint32_t>(std::chrono::duration_cast<std::chrono::milliseconds>(now).count());
 }
 
-#endif // SIMULATION
+#endif  // SIMULATION

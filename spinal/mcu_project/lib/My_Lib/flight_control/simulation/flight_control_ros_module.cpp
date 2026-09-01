@@ -7,11 +7,43 @@
 #include <algorithm>
 #include <functional>
 
+namespace
+{
+ConfigFlashSupport simulationSupport()
+{
+  ConfigFlashSupport support;
+  support.imu_mpu9250 = true;
+  support.imu_icm20948 = true;
+  support.barometer = true;
+  support.uart3_gps = true;
+  support.uart3_crsf = true;
+  support.servo_dynamixel = true;
+  support.servo_kondo = true;
+  support.motor_pwm = true;
+  support.motor_dshot = true;
+  support.attitude_estimation = true;
+  support.height_estimation = true;
+  support.position_estimation = true;
+  support.flight_control = true;
+  return support;
+}
+}  // namespace
+
 void FlightControlRosModule::init(const std::shared_ptr<rclcpp_lifecycle::LifecycleNode> &node,
                                   StateEstimate *estimator, ThrusterManager *thruster)
 {
   node_ = node;
   last_flight_status_publish_time_ = node_->now();
+  last_storage_status_publish_time_ = node_->now();
+  if (!node_->has_parameter("config_flash_path"))
+  {
+    (void)node_->declare_parameter<std::string>("config_flash_path", "/tmp/spinal_config_flash.bin");
+  }
+  if (!config_flash_storage_.init(node_->get_parameter("config_flash_path").as_string(), config_flash_database_))
+  {
+    config_flash_database_.loadDefaults();
+  }
+  estimator_ = estimator;
   thruster_ = thruster;
   flight_control_.init(estimator, thruster, nullptr);
   flight_control_.setRosLinkState(FlightLinkState::CONNECTING);
@@ -29,6 +61,16 @@ void FlightControlRosModule::init(const std::shared_ptr<rclcpp_lifecycle::Lifecy
   crsf_ros_module_.init(node_, rc_serial_port,
                         rc_serial_baud > 0 ? static_cast<uint32_t>(rc_serial_baud) : crsf::DEFAULT_BAUD_RATE,
                         &flight_control_);
+  const ConfigFlashPayload &boot_config = config_flash_database_.activeConfiguration();
+  if (estimator != nullptr)
+  {
+    estimator->configureSubsystems(boot_config.attitude_estimation_enabled != 0U,
+                                   boot_config.height_estimation_enabled != 0U,
+                                   boot_config.position_estimation_enabled != 0U);
+  }
+  crsf_ros_module_.setEnabled(boot_config.uart3_driver == Uart3Driver::CRSF);
+  flight_control_.setEnabled(boot_config.flight_control_enabled != 0U);
+  if (thruster_ != nullptr) thruster_->setOutputEnabled(boot_config.motor_output_driver != MotorOutputDriver::DISABLED);
 
   if (!initialized_)
   {
@@ -53,6 +95,9 @@ void FlightControlRosModule::activate()
   if (control_feedback_state_pub_) control_feedback_state_pub_->on_activate();
   if (gyro_moment_pub_) gyro_moment_pub_->on_activate();
   if (gimbal_control_pub_) gimbal_control_pub_->on_activate();
+  if (application_capabilities_pub_) application_capabilities_pub_->on_activate();
+  if (config_flash_status_pub_) config_flash_status_pub_->on_activate();
+  if (flight_parameter_table_pub_) flight_parameter_table_pub_->on_activate();
 }
 
 void FlightControlRosModule::deactivate()
@@ -67,6 +112,9 @@ void FlightControlRosModule::deactivate()
   if (control_feedback_state_pub_) control_feedback_state_pub_->on_deactivate();
   if (gyro_moment_pub_) gyro_moment_pub_->on_deactivate();
   if (gimbal_control_pub_) gimbal_control_pub_->on_deactivate();
+  if (application_capabilities_pub_) application_capabilities_pub_->on_deactivate();
+  if (config_flash_status_pub_) config_flash_status_pub_->on_deactivate();
+  if (flight_parameter_table_pub_) flight_parameter_table_pub_->on_deactivate();
 }
 
 void FlightControlRosModule::publish()
@@ -93,6 +141,48 @@ void FlightControlRosModule::publish()
     flight_status_pub_->publish(msg);
     last_flight_status_sequence_ = status.sequence;
     last_flight_status_publish_time_ = now;
+  }
+
+  if ((now - last_storage_status_publish_time_).seconds() >= 1.0)
+  {
+    if (application_capabilities_pub_)
+    {
+      spinal_msgs::msg::ApplicationCapabilities msg;
+      msg.board = spinal_msgs::msg::ApplicationCapabilities::BOARD_UNKNOWN;
+      msg.capability_mask = spinal_msgs::msg::ApplicationCapabilities::CAP_CRSF_UART3 |
+                            spinal_msgs::msg::ApplicationCapabilities::CAP_GPS_UART3 |
+                            spinal_msgs::msg::ApplicationCapabilities::CAP_IMU_ICM20948 |
+                            spinal_msgs::msg::ApplicationCapabilities::CAP_IMU_MPU9250 |
+                            spinal_msgs::msg::ApplicationCapabilities::CAP_BAROMETER |
+                            spinal_msgs::msg::ApplicationCapabilities::CAP_DYNAMIXEL |
+                            spinal_msgs::msg::ApplicationCapabilities::CAP_KONDO |
+                            spinal_msgs::msg::ApplicationCapabilities::CAP_DSHOT |
+                            spinal_msgs::msg::ApplicationCapabilities::CAP_PWM |
+                            spinal_msgs::msg::ApplicationCapabilities::CAP_ATTITUDE_ESTIMATION |
+                            spinal_msgs::msg::ApplicationCapabilities::CAP_HEIGHT_ESTIMATION |
+                            spinal_msgs::msg::ApplicationCapabilities::CAP_POSITION_ESTIMATION |
+                            spinal_msgs::msg::ApplicationCapabilities::CAP_FLIGHT_CONTROL |
+                            spinal_msgs::msg::ApplicationCapabilities::CAP_POSITION_CONTROL |
+                            spinal_msgs::msg::ApplicationCapabilities::CAP_CONFIG_FLASH_AB;
+      msg.max_motor_count = MAX_FLIGHT_CONTROL_MOTOR_NUM;
+      msg.config_schema_version = ConfigFlashDatabase::SCHEMA_VERSION;
+      msg.flight_parameter_schema_version = FlightParameterDatabase::SCHEMA_VERSION;
+      application_capabilities_pub_->publish(msg);
+    }
+    if (config_flash_status_pub_)
+    {
+      spinal_msgs::msg::ConfigFlashStatus msg;
+      fillConfigFlashStatus_(msg);
+      config_flash_status_pub_->publish(msg);
+    }
+    if (flight_parameter_table_pub_)
+    {
+      spinal_msgs::msg::FlightParameterTable msg;
+      flight_control_ros::fillFlightParameterTable(msg, flight_control_.parameterDatabase(),
+                                                   flight_control_.parametersApplied(), false);
+      flight_parameter_table_pub_->publish(msg);
+    }
+    last_storage_status_publish_time_ = now;
   }
 
   AttitudeController &att = flight_control_.getAttitudeController();
@@ -213,6 +303,12 @@ void FlightControlRosModule::configureRosIo_()
   gyro_moment_pub_ = node_->create_publisher<std_msgs::msg::Float32MultiArray>("gyro_moment_compensation",
                                                                                rclcpp::QoS(1));
   gimbal_control_pub_ = node_->create_publisher<sensor_msgs::msg::JointState>("gimbals_ctrl", rclcpp::QoS(1));
+  application_capabilities_pub_ = node_->create_publisher<spinal_msgs::msg::ApplicationCapabilities>(
+      "fc/application_capabilities", rclcpp::QoS(1));
+  config_flash_status_pub_ = node_->create_publisher<spinal_msgs::msg::ConfigFlashStatus>("fc/config_flash/status",
+                                                                                          rclcpp::QoS(1));
+  flight_parameter_table_pub_ = node_->create_publisher<spinal_msgs::msg::FlightParameterTable>(
+      "fc/flight_parameters/table", rclcpp::QoS(1));
 
   att_control_srv_ = node_->create_service<std_srvs::srv::SetBool>(
       "set_attitude_control",
@@ -221,6 +317,17 @@ void FlightControlRosModule::configureRosIo_()
   position_control_srv_ = node_->create_service<std_srvs::srv::SetBool>(
       "set_position_control",
       std::bind(&FlightControlRosModule::positionControlCallback_, this, std::placeholders::_1, std::placeholders::_2));
+
+  parameter_database_srv_ = node_->create_service<spinal_msgs::srv::ManageFlightParameters>(
+      "fc/parameters", std::bind(&FlightControlRosModule::parameterDatabaseCallback_, this, std::placeholders::_1,
+                                 std::placeholders::_2));
+
+  config_flash_srv_ = node_->create_service<spinal_msgs::srv::ManageConfigFlash>(
+      "fc/config_flash",
+      std::bind(&FlightControlRosModule::configFlashCallback_, this, std::placeholders::_1, std::placeholders::_2));
+  reboot_srv_ = node_->create_service<std_srvs::srv::Trigger>(
+      "fc/reboot",
+      std::bind(&FlightControlRosModule::rebootCallback_, this, std::placeholders::_1, std::placeholders::_2));
 }
 
 void FlightControlRosModule::flightConfigCallback_(const spinal_msgs::msg::FlightConfigCmd::SharedPtr msg)
@@ -355,6 +462,170 @@ void FlightControlRosModule::positionControlCallback_(const std::shared_ptr<std_
   flight_control_.setPositionControlEnabled(req->data);
   res->success = flight_control_.getPositionController().enabled() == req->data;
   res->message = res->success ? "position control mode updated" : "disarm before changing position control mode";
+}
+
+void FlightControlRosModule::parameterDatabaseCallback_(
+    const std::shared_ptr<spinal_msgs::srv::ManageFlightParameters::Request> req,
+    std::shared_ptr<spinal_msgs::srv::ManageFlightParameters::Response> res)
+{
+  if (!req || !res) return;
+  const std::lock_guard<std::mutex> lock(control_mutex_);
+  res->success = false;
+  res->result = spinal_msgs::srv::ManageFlightParameters::Response::RESULT_INVALID_COMMAND;
+  res->persistent_storage = false;
+
+  const bool armed = flight_control_.getSupervisor().status().arming_state == FlightArmingState::ARMED;
+  if (req->command == spinal_msgs::srv::ManageFlightParameters::Request::STATUS)
+  {
+    res->success = true;
+    res->result = spinal_msgs::srv::ManageFlightParameters::Response::RESULT_OK;
+  }
+  else if (req->command == spinal_msgs::srv::ManageFlightParameters::Request::COMMIT)
+  {
+    if (armed)
+      res->result = spinal_msgs::srv::ManageFlightParameters::Response::RESULT_ARMED;
+    else if (!flight_control_.prepareParameterCommit())
+      res->result = spinal_msgs::srv::ManageFlightParameters::Response::RESULT_INCOMPLETE;
+    else
+    {
+      res->success = true;
+      res->result = spinal_msgs::srv::ManageFlightParameters::Response::RESULT_OK;
+    }
+  }
+  else if (req->command == spinal_msgs::srv::ManageFlightParameters::Request::RELOAD)
+  {
+    if (armed)
+      res->result = spinal_msgs::srv::ManageFlightParameters::Response::RESULT_ARMED;
+    else if (!flight_control_.reloadParameterDatabase())
+      res->result = spinal_msgs::srv::ManageFlightParameters::Response::RESULT_NO_VALID_DATABASE;
+    else
+    {
+      res->success = true;
+      res->result = spinal_msgs::srv::ManageFlightParameters::Response::RESULT_OK;
+    }
+  }
+
+  const FlightParameterDatabase &database = flight_control_.parameterDatabase();
+  res->valid = database.valid();
+  res->dirty = database.dirty();
+  res->applied = flight_control_.parametersApplied();
+  res->schema_version = database.schemaVersion();
+  res->generation = database.generation();
+  res->crc32 = database.crc32();
+  res->valid_fields = database.validFields();
+}
+
+void FlightControlRosModule::fillConfigFlashStatus_(spinal_msgs::msg::ConfigFlashStatus &msg) const
+{
+  msg.valid = config_flash_database_.valid();
+  msg.dirty = config_flash_database_.dirty();
+  msg.reboot_required = config_flash_database_.rebootRequired();
+  msg.persistent_storage = true;
+  msg.active_slot = config_flash_database_.activeSlot();
+  msg.active_uart3_driver = config_flash_database_.activeUart3Driver();
+  msg.pending_uart3_driver = config_flash_database_.pendingUart3Driver();
+  const ConfigFlashPayload &active = config_flash_database_.activeConfiguration();
+  const ConfigFlashPayload &pending = config_flash_database_.pendingConfiguration();
+  msg.active_imu_driver = active.imu_driver;
+  msg.pending_imu_driver = pending.imu_driver;
+  msg.active_barometer_enabled = active.barometer_enabled != 0U;
+  msg.pending_barometer_enabled = pending.barometer_enabled != 0U;
+  msg.active_servo_driver = active.servo_driver;
+  msg.pending_servo_driver = pending.servo_driver;
+  msg.active_attitude_estimation_enabled = active.attitude_estimation_enabled != 0U;
+  msg.pending_attitude_estimation_enabled = pending.attitude_estimation_enabled != 0U;
+  msg.active_height_estimation_enabled = active.height_estimation_enabled != 0U;
+  msg.pending_height_estimation_enabled = pending.height_estimation_enabled != 0U;
+  msg.active_position_estimation_enabled = active.position_estimation_enabled != 0U;
+  msg.pending_position_estimation_enabled = pending.position_estimation_enabled != 0U;
+  msg.active_flight_control_enabled = active.flight_control_enabled != 0U;
+  msg.pending_flight_control_enabled = pending.flight_control_enabled != 0U;
+  msg.active_motor_output_driver = active.motor_output_driver;
+  msg.pending_motor_output_driver = pending.motor_output_driver;
+  msg.schema_version = config_flash_database_.schemaVersion();
+  msg.generation = config_flash_database_.generation();
+  msg.crc32 = config_flash_database_.crc32();
+}
+
+void FlightControlRosModule::configFlashCallback_(
+    const std::shared_ptr<spinal_msgs::srv::ManageConfigFlash::Request> req,
+    std::shared_ptr<spinal_msgs::srv::ManageConfigFlash::Response> res)
+{
+  if (!req || !res) return;
+  const std::lock_guard<std::mutex> lock(control_mutex_);
+  res->success = false;
+  res->result = spinal_msgs::srv::ManageConfigFlash::Response::RESULT_INVALID_COMMAND;
+  const bool armed = flight_control_.getSupervisor().status().arming_state == FlightArmingState::ARMED;
+  if (req->command == spinal_msgs::srv::ManageConfigFlash::Request::STATUS)
+  {
+    res->success = true;
+    res->result = spinal_msgs::srv::ManageConfigFlash::Response::RESULT_OK;
+  }
+  else if (armed)
+  {
+    res->result = spinal_msgs::srv::ManageConfigFlash::Response::RESULT_ARMED;
+  }
+  else if (req->command == spinal_msgs::srv::ManageConfigFlash::Request::STAGE)
+  {
+    ConfigFlashPayload pending = config_flash_database_.pendingConfiguration();
+    pending.imu_driver = req->imu_driver;
+    pending.barometer_enabled = req->barometer_enabled ? 1U : 0U;
+    pending.uart3_driver = req->uart3_driver;
+    pending.servo_driver = req->servo_driver;
+    pending.attitude_estimation_enabled = req->attitude_estimation_enabled ? 1U : 0U;
+    pending.height_estimation_enabled = req->height_estimation_enabled ? 1U : 0U;
+    pending.position_estimation_enabled = req->position_estimation_enabled ? 1U : 0U;
+    pending.flight_control_enabled = req->flight_control_enabled ? 1U : 0U;
+    pending.motor_output_driver = req->motor_output_driver;
+    res->success = config_flash_database_.stageConfiguration(pending, simulationSupport());
+    res->result = res->success ? spinal_msgs::srv::ManageConfigFlash::Response::RESULT_OK :
+                                 spinal_msgs::srv::ManageConfigFlash::Response::RESULT_UNSUPPORTED;
+  }
+  else if (req->command == spinal_msgs::srv::ManageConfigFlash::Request::COMMIT)
+  {
+    res->success = config_flash_storage_.commit(config_flash_database_);
+    res->result = res->success ? spinal_msgs::srv::ManageConfigFlash::Response::RESULT_OK :
+                                 spinal_msgs::srv::ManageConfigFlash::Response::RESULT_STORAGE_ERROR;
+  }
+  else if (req->command == spinal_msgs::srv::ManageConfigFlash::Request::RELOAD)
+  {
+    res->success = config_flash_storage_.reload(config_flash_database_);
+    res->result = res->success ? spinal_msgs::srv::ManageConfigFlash::Response::RESULT_OK :
+                                 spinal_msgs::srv::ManageConfigFlash::Response::RESULT_NO_VALID_CONFIG;
+  }
+  fillConfigFlashStatus_(res->status);
+}
+
+void FlightControlRosModule::rebootCallback_(const std::shared_ptr<std_srvs::srv::Trigger::Request> req,
+                                             std::shared_ptr<std_srvs::srv::Trigger::Response> res)
+{
+  (void)req;
+  if (!res) return;
+  const std::lock_guard<std::mutex> lock(control_mutex_);
+  if (flight_control_.getSupervisor().status().arming_state == FlightArmingState::ARMED)
+  {
+    res->success = false;
+    res->message = "reboot rejected while armed";
+    return;
+  }
+  if (!config_flash_storage_.reload(config_flash_database_))
+  {
+    res->success = false;
+    res->message = "no valid simulated Config Flash image";
+    return;
+  }
+  config_flash_database_.setAppliedConfiguration(config_flash_database_.pendingConfiguration());
+  const ConfigFlashPayload &applied = config_flash_database_.activeConfiguration();
+  if (estimator_ != nullptr)
+  {
+    estimator_->configureSubsystems(applied.attitude_estimation_enabled != 0U, applied.height_estimation_enabled != 0U,
+                                    applied.position_estimation_enabled != 0U);
+  }
+  crsf_ros_module_.setEnabled(applied.uart3_driver == Uart3Driver::CRSF);
+  flight_control_.setEnabled(applied.flight_control_enabled != 0U);
+  if (thruster_ != nullptr) thruster_->setOutputEnabled(applied.motor_output_driver != MotorOutputDriver::DISABLED);
+  res->success = true;
+  res->message = "simulated FC reboot applied Config Flash";
 }
 
 #endif  // SIMULATION

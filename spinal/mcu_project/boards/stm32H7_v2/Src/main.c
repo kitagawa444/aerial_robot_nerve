@@ -45,6 +45,9 @@
 /* #include <spinal/ServoControlCmd.h> */
 #include <spinal_msgs/msg/imu.h>
 
+#include "flashmemory/application_capabilities.h"
+#include "flashmemory/config_flash_database.h"
+#include "flashmemory/config_flash_storage.h"
 #include "flashmemory/flashmemory.h"
 #include "sensors/imu/drivers/mpu9250/imu_mpu9250.h"
 #include "sensors/imu/drivers/icm20948/icm_20948.h"
@@ -138,21 +141,19 @@ osMailQId canMsgMailHandle;
 /* micro ros */
 static RosContext ros_cxt_;
 static RosModuleManager<9> ros_mgr_;
+ConfigFlashPayload g_boot_config = ApplicationCapability::defaults();
+uint8_t g_uart3_driver = DEFAULT_UART3_DRIVER;
+ConfigFlashDatabase config_flash_database_;
 
 /* /\* sensor instances *\/ */
 ImuRosModule imu_ros_mod_;
-#if IMU_MPU
-IMUOnboard imu_;
-#elif IMU_ICM
-ICM20948 imu_;
-#endif
+IMUOnboard mpu9250_imu_;
+ICM20948 icm20948_imu_;
+IMU* imu_ = nullptr;
 
 BaroRosModule baro_ros_mod_;
-#if GPS_FLAG
 GpsRosModule gps_ros_mod_;
-#elif CRSF_RC_INPUT
 CrsfRosModule crsf_ros_mod_;
-#endif
 BatteryStatusRosModule battery_status_ros_mod_;
 ThrusterRosModule thruster_ros_mod_;
 FlightControlRosModule flight_control_ros_mod_;
@@ -330,6 +331,18 @@ int main(void)
   /* Configure the system clock */
   SystemClock_Config();
 
+  if (!ConfigFlashStorage::load(config_flash_database_))
+  {
+    config_flash_database_.loadDefaults(ApplicationCapability::defaults());
+  }
+  g_boot_config = config_flash_database_.activeConfiguration();
+  if (!ConfigFlashDatabase::validateConfiguration(g_boot_config, ApplicationCapability::support()))
+  {
+    g_boot_config = ApplicationCapability::defaults();
+  }
+  g_uart3_driver = g_boot_config.uart3_driver;
+  config_flash_database_.setAppliedConfiguration(g_boot_config);
+
   /* USER CODE BEGIN SysInit */
 
   /* USER CODE END SysInit */
@@ -343,9 +356,7 @@ int main(void)
   MX_ADC1_Init();
   MX_I2C3_Init();
   MX_USART1_UART_Init();
-#if GPS_FLAG || CRSF_RC_INPUT
-  MX_USART3_UART_Init();
-#endif
+  if (g_uart3_driver != Uart3Driver::DISABLED) MX_USART3_UART_Init();
   MX_TIM1_Init();
   MX_TIM4_Init();
   MX_USART6_UART_Init();
@@ -391,46 +402,63 @@ int main(void)
 
   ensure_ros_mutex_created();
   
-  imu_.init(&hspi1, &hi2c3, IMUCS_GPIO_Port, IMUCS_Pin, LED0_GPIO_Port, LED0_Pin);
-  imu_ros_mod_.addImu(&imu_);
-  ros_mgr_.add(&imu_ros_mod_);
-  
-  baro_ros_mod_.init_hw(&hi2c1, BAROCS_GPIO_Port, BAROCS_Pin);
-  ros_mgr_.add(&baro_ros_mod_);
+  if (g_boot_config.imu_driver == ImuDriver::MPU9250)
+  {
+    mpu9250_imu_.init(&hspi1, &hi2c3, IMUCS_GPIO_Port, IMUCS_Pin, LED0_GPIO_Port, LED0_Pin);
+    imu_ = &mpu9250_imu_;
+  }
+  else if (g_boot_config.imu_driver == ImuDriver::ICM20948)
+  {
+    icm20948_imu_.init(&hspi1, &hi2c3, IMUCS_GPIO_Port, IMUCS_Pin, LED0_GPIO_Port, LED0_Pin);
+    imu_ = &icm20948_imu_;
+  }
+  if (imu_ != nullptr)
+  {
+    imu_ros_mod_.addImu(imu_);
+    ros_mgr_.add(&imu_ros_mod_);
+  }
 
-#if GPS_FLAG
-  gps_ros_mod_.init_hw(&huart3, LED2_GPIO_Port, LED2_Pin);
-  ros_mgr_.add(&gps_ros_mod_);
-  estimator_ros_mod_.init_hw(
-    &imu_, baro_ros_mod_.getBaroHw(), gps_ros_mod_.getGpsHw(), &flightControlMutexHandle);
-#elif CRSF_RC_INPUT
-  crsf_ros_mod_.init_hw(
-    &huart3,
-    flight_control_ros_mod_.getFlightControlCore(),
-    &flightControlMutexHandle);
-  ros_mgr_.add(&crsf_ros_mod_);
-  estimator_ros_mod_.init_hw(&imu_, baro_ros_mod_.getBaroHw(), nullptr, &flightControlMutexHandle);
-#else
-  estimator_ros_mod_.init_hw(&imu_, baro_ros_mod_.getBaroHw(), nullptr, &flightControlMutexHandle);
-#endif
+  Baro* selected_baro = nullptr;
+  if (g_boot_config.barometer_enabled != 0U)
+  {
+    baro_ros_mod_.init_hw(&hi2c1, BAROCS_GPIO_Port, BAROCS_Pin);
+    ros_mgr_.add(&baro_ros_mod_);
+    selected_baro = baro_ros_mod_.getBaroHw();
+  }
+
+  GPS* selected_gps = nullptr;
+
+  if (g_uart3_driver == Uart3Driver::GPS)
+  {
+    gps_ros_mod_.init_hw(&huart3, LED2_GPIO_Port, LED2_Pin);
+    ros_mgr_.add(&gps_ros_mod_);
+    selected_gps = gps_ros_mod_.getGpsHw();
+  }
+  else if (g_uart3_driver == Uart3Driver::CRSF)
+  {
+    crsf_ros_mod_.init_hw(
+      &huart3, flight_control_ros_mod_.getFlightControlCore(), &flightControlMutexHandle);
+    ros_mgr_.add(&crsf_ros_mod_);
+  }
+  estimator_ros_mod_.init_hw(imu_, selected_baro, selected_gps, &flightControlMutexHandle,
+                             g_boot_config.attitude_estimation_enabled != 0U,
+                             g_boot_config.height_estimation_enabled != 0U,
+                             g_boot_config.position_estimation_enabled != 0U);
   ros_mgr_.add(&estimator_ros_mod_);
 
 /*   DShot* dshotptr = nullptr; */
-#if DSHOT
-  battery_status_ros_mod_.init_hw(&hadc1, false);
-#else
-  battery_status_ros_mod_.init_hw(&hadc1);
-#endif
+  battery_status_ros_mod_.init_hw(&hadc1,
+                                  g_boot_config.motor_output_driver != MotorOutputDriver::DRIVER_DSHOT);
   ros_mgr_.add(&battery_status_ros_mod_);
 
-  thruster_ros_mod_.init_hw(&htim1, &htim4);
-#if DSHOT
-  thruster_ros_mod_.init_dshot_telemetry(&huart6);
-#endif
+  thruster_ros_mod_.init_hw(&htim1, &htim4, g_boot_config.motor_output_driver);
+  if (g_boot_config.motor_output_driver == MotorOutputDriver::DRIVER_DSHOT)
+    thruster_ros_mod_.init_dshot_telemetry(&huart6);
   thruster_ros_mod_.setBatteryStatus(battery_status_ros_mod_.getBatteryCore());
   ros_mgr_.add(&thruster_ros_mod_);
 
-  bootloader_ros_mod_.init_hw(thruster_ros_mod_.getThrusterManager());
+  bootloader_ros_mod_.init_hw(
+    thruster_ros_mod_.getThrusterManager(), flight_control_ros_mod_.getFlightControlCore());
   ros_mgr_.add(&bootloader_ros_mod_);
 
 /* #if DSHOT */
@@ -444,16 +472,25 @@ int main(void)
 
   FlashMemory::read(); // battery scale and IMU calib data (including IMU in neurons)
 
-  const bool servo_connect = servo_ros_mod_.init_hw(&huart2, nullptr);
+  const bool servo_connect = servo_ros_mod_.init_hw(&huart2, nullptr, g_boot_config.servo_driver);
   // Keep the board-configuration services available even when no servo is
   // detected at boot. Runtime servo I/O remains disabled by servo_connect.
   ros_mgr_.add(&servo_ros_mod_);
+
+  // Keep the legacy calibration/servo layout intact and append the versioned
+  // flight parameter image after every previously registered flash value.
+  FlashMemory::addValue(
+    flight_control_ros_mod_.getFlightControlCore()->parameterStorageData(),
+    flight_control_ros_mod_.getFlightControlCore()->parameterStorageSize());
+  FlashMemory::read();
 
   flight_control_ros_mod_.init_hw(
     estimator_ros_mod_.getStateEstimateCore(),
     thruster_ros_mod_.getThrusterManager(),
     servo_connect ? servo_ros_mod_.getServoCore() : nullptr,
-    &flightControlMutexHandle);
+    &flightControlMutexHandle,
+    &config_flash_database_);
+  flight_control_ros_mod_.getFlightControlCore()->setEnabled(g_boot_config.flight_control_enabled != 0U);
   ros_mgr_.add(&flight_control_ros_mod_);
 
 /*   bool nerve_connect = Spine::init(&hfdcan1, &nh_, &estimator_, &controller_, LED1_GPIO_Port, LED1_Pin); */
@@ -1171,29 +1208,33 @@ static void MX_USART3_UART_Init(void)
 
   /* USER CODE END USART3_Init 1 */
   huart3.Instance = USART3;
-#if CRSF_RC_INPUT
-  huart3.Init.BaudRate = 420000;
-#else
-  huart3.Init.BaudRate = 115200;
-#endif
+  if (g_uart3_driver == Uart3Driver::CRSF)
+  {
+    huart3.Init.BaudRate = 420000;
+  }
+  else
+  {
+    huart3.Init.BaudRate = 115200;
+  }
   huart3.Init.WordLength = UART_WORDLENGTH_8B;
   huart3.Init.StopBits = UART_STOPBITS_1;
   huart3.Init.Parity = UART_PARITY_NONE;
-#if CRSF_RC_INPUT
-  huart3.Init.Mode = UART_MODE_RX;
-#else
-  huart3.Init.Mode = UART_MODE_TX_RX;
-#endif
+  if (g_uart3_driver == Uart3Driver::CRSF)
+  {
+    huart3.Init.Mode = UART_MODE_RX;
+  }
+  else
+  {
+    huart3.Init.Mode = UART_MODE_TX_RX;
+  }
   huart3.Init.HwFlowCtl = UART_HWCONTROL_NONE;
   huart3.Init.OverSampling = UART_OVERSAMPLING_16;
   huart3.Init.OneBitSampling = UART_ONE_BIT_SAMPLE_DISABLE;
   huart3.Init.ClockPrescaler = UART_PRESCALER_DIV1;
   huart3.AdvancedInit.AdvFeatureInit = UART_ADVFEATURE_NO_INIT;
-#if CRSF_RC_INPUT
-  if (HAL_UART_Init(&huart3) != HAL_OK)
-#else
-  if (HAL_HalfDuplex_Init(&huart3) != HAL_OK)
-#endif
+  const HAL_StatusTypeDef uart_init_status =
+    g_uart3_driver == Uart3Driver::CRSF ? HAL_UART_Init(&huart3) : HAL_HalfDuplex_Init(&huart3);
+  if (uart_init_status != HAL_OK)
   {
     Error_Handler();
   }
@@ -1397,7 +1438,8 @@ void coreTaskFunc(void const * argument)
   /* nh_.initNode(dst_addr, 12345,12345); */
 #endif
 
-  imu_.gyroCalib(true, IMU::GYRO_DEFAULT_CALIB_DURATION); // re-calibrate gyroscope because of the HAL_Delay in spine init
+  if (imu_ != nullptr)
+    imu_->gyroCalib(true, IMU::GYRO_DEFAULT_CALIB_DURATION); // re-calibrate after the HAL_Delay in spine init
 
   osSemaphoreWait(coreTaskSemHandle, osWaitForever);
 
@@ -1407,13 +1449,10 @@ void coreTaskFunc(void const * argument)
       osSemaphoreWait(coreTaskSemHandle, osWaitForever);
 
       /* Spine::send(); */
-      imu_.update();
-      baro_ros_mod_.update();
-#if GPS_FLAG
-      gps_ros_mod_.update();
-#elif CRSF_RC_INPUT
-      crsf_ros_mod_.update();
-#endif
+      if (imu_ != nullptr) imu_->update();
+      if (g_boot_config.barometer_enabled != 0U) baro_ros_mod_.update();
+      if (g_uart3_driver == Uart3Driver::GPS) gps_ros_mod_.update();
+      else if (g_uart3_driver == Uart3Driver::CRSF) crsf_ros_mod_.update();
       estimator_ros_mod_.update();
       flight_control_ros_mod_.update();
       thruster_ros_mod_.sendCommand();
@@ -1505,11 +1544,8 @@ void rosSpinTaskFunc(void const * argument)
         {
           osMutexWait(ros_cxt_.ros_mutex, osWaitForever);
           rclc_executor_spin_some(&ros_cxt_.executor, RCL_MS_TO_NS(0));
-#if GPS_FLAG
-          gps_ros_mod_.publish();
-#elif CRSF_RC_INPUT
-          crsf_ros_mod_.publish();
-#endif
+          if (g_uart3_driver == Uart3Driver::GPS) gps_ros_mod_.publish();
+          else if (g_uart3_driver == Uart3Driver::CRSF) crsf_ros_mod_.publish();
           servo_ros_mod_.publish();
           thruster_ros_mod_.publish();
           flight_control_ros_mod_.publish();
@@ -1593,12 +1629,15 @@ void voltageTask(void const * argument)
   /* Infinite loop */
   for(;;)
   {
-#if DSHOT
-    thruster_ros_mod_.updateTelemetry();
-    battery_status_ros_mod_.publish();
-#else
-    battery_status_ros_mod_.update();
-#endif
+    if (g_boot_config.motor_output_driver == MotorOutputDriver::DRIVER_DSHOT)
+    {
+      thruster_ros_mod_.updateTelemetry();
+      battery_status_ros_mod_.publish();
+    }
+    else
+    {
+      battery_status_ros_mod_.update();
+    }
     osDelay(VOLTAGE_CHECK_INTERVAL);
   }
   /* USER CODE END voltageTask */
