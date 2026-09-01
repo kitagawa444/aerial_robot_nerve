@@ -55,6 +55,11 @@ const std::vector<std::string> kDefaultRootToNamespaceTopics = {
   "battery_voltage_status:std_msgs/msg/Float32",
   "gps:spinal_msgs/msg/Gps",
   "encoder_angle:std_msgs/msg/UInt16",
+  "rc/joy:sensor_msgs/msg/Joy",
+  "rc/connected:std_msgs/msg/Bool",
+  "rc/link_quality:std_msgs/msg/UInt8",
+  "rc/teleop_command:std_msgs/msg/UInt8",
+  "state_estimate:spinal_msgs/msg/StateEstimate",
 };
 
 const std::vector<std::string> kDefaultNamespaceToRootTopics = {
@@ -71,6 +76,9 @@ const std::vector<std::string> kDefaultNamespaceToRootTopics = {
   "gps_config_cmd:std_msgs/msg/UInt8",
   "baro_config_cmd:std_msgs/msg/UInt8",
   "set_adc_scale:std_msgs/msg/Float32",
+  "external_state_measurement:spinal_msgs/msg/ExternalStateMeasurement",
+  "position_control/config:spinal_msgs/msg/PositionControlConfig",
+  "position_control/setpoint:spinal_msgs/msg/PositionControlSetpoint",
 };
 }  // namespace
 
@@ -80,10 +88,10 @@ public:
   SpinalNamespaceBridge() : Node("spinal_namespace_bridge")
   {
     robot_namespace_ = declare_parameter<std::string>("robot_namespace", "mini_quadrotor");
-    root_to_namespace_topics_ = declare_parameter<std::vector<std::string>>(
-        "root_to_namespace_topics", kDefaultRootToNamespaceTopics);
-    namespace_to_root_topics_ = declare_parameter<std::vector<std::string>>(
-        "namespace_to_root_topics", kDefaultNamespaceToRootTopics);
+    root_to_namespace_topics_ = declare_parameter<std::vector<std::string>>("root_to_namespace_topics",
+                                                                            kDefaultRootToNamespaceTopics);
+    namespace_to_root_topics_ = declare_parameter<std::vector<std::string>>("namespace_to_root_topics",
+                                                                            kDefaultNamespaceToRootTopics);
 
     auto best_effort_qos = rclcpp::QoS(rclcpp::KeepLast(10));
     best_effort_qos.best_effort();
@@ -124,8 +132,7 @@ private:
     auto publisher = create_generic_publisher(output_topic, spec.type, output_qos);
     auto subscription = create_generic_subscription(
         input_topic, spec.type, input_qos,
-        [publisher, input_topic, output_topic, logger = get_logger()](
-            std::shared_ptr<rclcpp::SerializedMessage> msg)
+        [publisher, input_topic, output_topic, logger = get_logger()](std::shared_ptr<rclcpp::SerializedMessage> msg)
         {
           try
           {

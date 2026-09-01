@@ -1,0 +1,12 @@
+builtin_interfaces/Time stamp
+float32[3] position
+float32[3] velocity
+float32[3] acceleration
+float32 yaw
+float32 yaw_rate
+float32 yaw_acceleration
+float32 initial_height
+uint8 horizontal_control_mode
+bool active
+bool manual_control_allowed
+bool landing

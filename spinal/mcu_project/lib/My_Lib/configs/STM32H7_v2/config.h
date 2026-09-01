@@ -43,7 +43,12 @@
 #define BARO_FLAG 1
 //2.1.3 GPS Sensor
 #define GPS_FLAG 0
-//2.1.3 Direct Servo Control
+//2.1.4 CRSF RC receiver on UART3 (mutually exclusive with GPS)
+#define CRSF_RC_INPUT 1
+#if GPS_FLAG && CRSF_RC_INPUT
+#error "GPS and CRSF_RC_INPUT cannot share UART3"
+#endif
+//2.1.5 Direct Servo Control
 #define DYNAMIXEL 1
 #define KONDO 0
 //2.2 State Estimate

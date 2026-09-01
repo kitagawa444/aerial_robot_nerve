@@ -36,8 +36,12 @@ add_library(spinal_math
 set_target_properties(spinal_math PROPERTIES POSITION_INDEPENDENT_CODE ON)
 
 add_library(spinal_flight_control
+  ${SPINAL_DIRS}/rc/crsf_protocol.cpp
+  ${SPINAL_DIRS}/rc/crsf_teleop.cpp
+  ${SPINAL_DIRS}/rc/simulation/crsf_ros_module.cpp
   ${SPINAL_DIRS}/flight_control/flight_control.cpp
   ${SPINAL_DIRS}/flight_control/attitude/attitude_control.cpp
+  ${SPINAL_DIRS}/flight_control/position/position_control.cpp
   ${SPINAL_DIRS}/flight_control/simulation/flight_control_ros_module.cpp
   ${SPINAL_DIRS}/thruster/simulation/thruster_manager.cpp
   ${SPINAL_DIRS}/thruster/simulation/thruster_ros_module.cpp
@@ -54,6 +58,7 @@ target_include_directories(spinal_flight_control
 target_link_libraries(spinal_flight_control
   PUBLIC
   spinal_math
+  spinal_state_estimation
 )
 
 ament_target_dependencies(spinal_flight_control
@@ -66,16 +71,19 @@ ament_target_dependencies(spinal_flight_control
   std_srvs
 )
 
-add_library(spinal_state_estimation INTERFACE)
+add_library(spinal_state_estimation
+  ${SPINAL_DIRS}/state_estimate/eskf/eskf15.cpp
+)
 
 target_include_directories(spinal_state_estimation
-  INTERFACE
+  PUBLIC
   $<BUILD_INTERFACE:${SPINAL_DIRS}>
   $<INSTALL_INTERFACE:include/My_Lib>
 )
 
 target_link_libraries(spinal_state_estimation
-  INTERFACE
+  PUBLIC
+  spinal_math
   rclcpp::rclcpp
   rclcpp_lifecycle::rclcpp_lifecycle
 )
@@ -125,6 +133,38 @@ install(DIRECTORY
   resource/
   DESTINATION share/${PROJECT_NAME}/resource
 )
+
+if(BUILD_TESTING)
+  find_package(ament_cmake_gtest REQUIRED)
+  find_package(ament_cmake_pytest REQUIRED)
+  ament_add_gtest(crsf_protocol_test
+    test/crsf_protocol_test.cpp
+    ${SPINAL_DIRS}/rc/crsf_protocol.cpp
+  )
+  target_include_directories(crsf_protocol_test PRIVATE ${SPINAL_DIRS})
+  ament_add_gtest(crsf_teleop_test
+    test/crsf_teleop_test.cpp
+    ${SPINAL_DIRS}/rc/crsf_teleop.cpp
+  )
+  target_include_directories(crsf_teleop_test PRIVATE ${SPINAL_DIRS})
+  ament_add_gtest(eskf15_test
+    test/eskf15_test.cpp
+  )
+  target_link_libraries(eskf15_test spinal_state_estimation)
+  ament_add_gtest(state_estimate_test
+    test/state_estimate_test.cpp
+  )
+  target_link_libraries(state_estimate_test spinal_flight_control)
+  ament_add_gtest(position_control_test
+    test/position_control_test.cpp
+    ${SPINAL_DIRS}/flight_control/position/position_control.cpp
+  )
+  target_link_libraries(position_control_test spinal_state_estimation)
+  ament_add_gtest(attitude_control_test
+    test/attitude_control_test.cpp
+  )
+  target_link_libraries(attitude_control_test spinal_flight_control)
+endif()
 
 install(PROGRAMS
   scripts/topic_hz_checker.py

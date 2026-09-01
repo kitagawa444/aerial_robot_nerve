@@ -13,15 +13,15 @@ public:
   AttitudeController();
   ~AttitudeController() = default;
 
-  void init(StateEstimate* estimator);
+  void init(StateEstimate *estimator);
   void reset();
   bool update();
 
-  bool applyFourAxisCommand(const FlightControlFourAxisCommand& cmd);
-  bool applyRpyGains(const FlightControlRpyTerms& gains);
-  bool applyPMatrixInertia(const FlightControlPMatrixPseudoInverseWithInertia& msg);
-  bool applyTorqueAllocationMatrixInv(const FlightControlTorqueAllocationMatrixInv& msg);
-  void applyOffsetRotation(const FlightControlDesireCoord& msg);
+  bool applyFourAxisCommand(const FlightControlFourAxisCommand &cmd);
+  bool applyRpyGains(const FlightControlRpyTerms &gains);
+  bool applyPMatrixInertia(const FlightControlPMatrixPseudoInverseWithInertia &msg);
+  bool applyTorqueAllocationMatrixInv(const FlightControlTorqueAllocationMatrixInv &msg);
+  void applyOffsetRotation(const FlightControlDesireCoord &msg);
 
   bool activated() const;
 
@@ -33,7 +33,7 @@ public:
   void setIntegrateFlag(bool integrate_flag) { integrate_flag_ = integrate_flag; }
   void setForceLandingFlag(bool force_landing_flag) { force_landing_flag_ = force_landing_flag; }
   void setAttitudeControlFlag(bool att_control_flag) { att_control_flag_ = att_control_flag; }
-  void setThrusterLimits(const ThrusterControlLimits& limits) { limits_ = limits; }
+  void setThrusterLimits(const ThrusterControlLimits &limits) { limits_ = limits; }
 
   uint16_t getMotorNumber() const { return motor_number_; }
   uint16_t getThrusterCount() const;
@@ -45,30 +45,35 @@ public:
   bool getIntegrateFlag() const { return integrate_flag_; }
   bool getForceLandingFlag() const { return force_landing_flag_; }
   bool getAttitudeControlFlag() const { return att_control_flag_; }
+  bool rpyGainsConfigured() const { return rpy_gains_configured_; }
+  bool torqueAllocationConfigured() const { return torque_allocation_configured_; }
 
-  const float* getTargetThrust() const { return target_thrust_; }
-  const float* getTargetGimbalAngles() const { return target_gimbal_angles_; }
+  const float *getTargetThrust() const { return target_thrust_; }
+  const float *getTargetGimbalAngles() const { return target_gimbal_angles_; }
   size_t getTargetGimbalAngleCount() const;
-  const float* getGyroMomentCompensation() const { return gyro_moment_compensation_; }
+  const float *getGyroMomentCompensation() const { return gyro_moment_compensation_; }
 
-  const FlightControlRpyTerms& getControlTerms() const { return control_term_; }
-  const FlightControlRpyTerm& getControlFeedbackState() const { return control_feedback_state_; }
+  const FlightControlRpyTerms &getControlTerms() const { return control_term_; }
+  const FlightControlRpyTerm &getControlFeedbackState() const { return control_feedback_state_; }
 
   bool controlTermPublishReady(bool update_last_time = false);
   bool controlFeedbackStatePublishReady(bool update_last_time = false);
 
 private:
-  StateEstimate* estimator_{nullptr};
+  StateEstimate *estimator_{ nullptr };
 
-  int8_t uav_model_{-1};
-  uint16_t motor_number_{0};
-  uint8_t gimbal_dof_{0};
-  uint8_t rotor_coef_{1};
-  uint8_t rotor_devider_{1};
-  bool start_control_flag_{false};
-  bool integrate_flag_{false};
-  bool force_landing_flag_{false};
-  bool att_control_flag_{true};
+  int8_t uav_model_{ -1 };
+  uint16_t motor_number_{ 0 };
+  uint8_t gimbal_dof_{ 0 };
+  uint8_t rotor_coef_{ 1 };
+  uint8_t rotor_devider_{ 1 };
+  bool start_control_flag_{ false };
+  bool integrate_flag_{ false };
+  bool force_landing_flag_{ false };
+  bool att_control_flag_{ true };
+  bool rpy_gains_configured_{ false };
+  bool rpy_gains_require_allocation_{ false };
+  bool torque_allocation_configured_{ false };
 
   float target_angle_[3]{};
   float error_angle_i_[3]{};
@@ -87,17 +92,17 @@ private:
   float target_thrust_[MAX_FLIGHT_CONTROL_MOTOR_NUM]{};
   float target_gimbal_angles_[MAX_FLIGHT_CONTROL_MOTOR_NUM]{};
   float gyro_moment_compensation_[MAX_FLIGHT_CONTROL_MOTOR_NUM]{};
-  int max_yaw_term_index_{-1};
+  int max_yaw_term_index_{ -1 };
 
   ap::Matrix3f offset_rot_;
   float p_matrix_pseudo_inverse_[MAX_FLIGHT_CONTROL_MOTOR_NUM][4]{};
   ap::Matrix3f inertia_;
 
-  bool failsafe_{false};
-  uint32_t flight_command_last_stamp_{0};
-  uint32_t update_last_time_{0};
-  uint32_t control_term_pub_last_time_{0};
-  uint32_t control_feedback_state_pub_last_time_{0};
+  bool failsafe_{ false };
+  uint32_t flight_command_last_stamp_{ 0 };
+  uint32_t update_last_time_{ 0 };
+  uint32_t control_term_pub_last_time_{ 0 };
+  uint32_t control_feedback_state_pub_last_time_{ 0 };
 
   ThrusterControlLimits limits_{};
   FlightControlRpyTerms control_term_{};

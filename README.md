@@ -220,6 +220,161 @@ configuration sector at `0x081e0000`. Fully unattended updates without ST-LINK
 require either a board revision exposing BOOT0 and NRST to the host, or a custom
 Flash-resident bootloader that does not enter the factory ROM loader.
 
+## ExpressLRS / CRSF receiver on UART3
+
+The STM32H7 v2 configuration enables `CRSF_RC_INPUT` on UART3. UART3 is set to
+420000 baud, 8-N-1, uninverted, receive-only mode. Because GPS previously used the
+same UART, `GPS_FLAG` and `CRSF_RC_INPUT` are mutually exclusive compile-time
+options in `configs/STM32H7_v2/config.h`.
+
+Wire the ExpressLRS receiver to the v2 board's J7 connector as follows:
+
+| Receiver pad | J7 pin | STM32 signal |
+| --- | ---: | --- |
+| TX | 1 | USART3_RX / PD9 |
+| RX | 2 | Do not connect; USART3_TX / PD8 is disabled in CRSF mode |
+| GND | 3 | GND |
+| 5V | 4 | +5V |
+
+The receiver's TX and the board's RX must be crossed. The firmware validates
+the CRSF CRC8 before accepting a frame, decodes all 16 packed channels, and
+marks the link disconnected when no valid RC channel frame arrives for 100 ms.
+It does not feed RC values directly into flight control or motor outputs.
+
+The following root topics are published and also relayed by
+`spinal_namespace_bridge` into the configured robot namespace:
+
+```text
+/rc/joy           sensor_msgs/msg/Joy  # axes[0]..axes[15], normalized -1..1
+/rc/connected     std_msgs/msg/Bool
+/rc/link_quality  std_msgs/msg/UInt8   # uplink link quality, 0..100
+```
+
+After building, flashing, and starting the micro-ROS agent, verify reception
+before connecting the values to flight control:
+
+```bash
+ros2 topic echo /rc/connected
+ros2 topic hz /rc/joy
+ros2 topic echo /rc/joy --once
+```
+
+Channel order and transmitter switch assignment are intentionally left in the
+native CRSF order. Mapping roll, pitch, yaw, throttle, arm, and kill switches
+is a separate safety layer and should include an explicit failsafe policy.
+
+### XIAO receiver UART bench adapter
+
+`xiao_rx_uart_bridge` is a standalone PlatformIO project for connecting an
+ExpressLRS receiver UART to a PC through a Seeed Studio XIAO RP2040. Its default
+environment is a receive-only 420000-baud adapter for CRSF radio-in-the-loop
+simulation, so PC telemetry payloads are not written back to the receiver. An
+optional 460800-baud receive-only environment remains for wired MAVLink bench
+tests. An explicit bidirectional environment is retained for receiver
+configuration, and a separate `crsf_hid` environment retains the 420000-baud
+CRSF-to-USB-gamepad bring-up tool. See
+[`xiao_rx_uart_bridge/README.md`](xiao_rx_uart_bridge/README.md) for wiring and
+build instructions.
+
+### Nano TX without a handset
+
+A PC or VIM4 can provide the handset-side CRSF stream through the Nano TX V2
+USB serial port. The standalone script does not require ROS to be running. Its
+safe defaults use the conventional AETR order: CH1, CH2, and CH4 are centred,
+CH3 (throttle) is low, and CH5 through CH16 are low.
+
+Keep the Nano TX antenna attached whenever the module is powered. With motors
+disconnected, reconnect the Nano TX USB cable so it leaves Wi-Fi mode, then run:
+
+```bash
+python3 crsf_radio_tools/scripts/send_crsf_channels.py
+
+# After building and sourcing the ROS 2 workspace, the installed form is:
+ros2 run crsf_radio_tools send_crsf_channels.py
+```
+
+The QinHeng USB serial device is detected automatically. An explicit stable
+device path can also be used:
+
+```bash
+ros2 run crsf_radio_tools send_crsf_channels.py \
+  --port /dev/serial/by-id/usb-1a86_USB_Single_Serial_XXXXXXXX-if00
+```
+
+The default handset-side baud rate is `115200`, which the ExpressLRS TX module
+auto-detects. Although a module-bay CRSF connection commonly uses `400000`, the
+Nano TX V2 QinHeng USB CDC bridge stalled when that non-standard rate was
+requested on the tested Ubuntu host. It sustained the default 250 Hz stream at
+`115200`.
+
+Values are raw 11-bit CRSF values (`172` low, `992` centre, `1811` high).
+Override individual one-based channels with repeatable `--set` arguments:
+
+```bash
+# Show the generated frame without using hardware.
+ros2 run crsf_radio_tools send_crsf_channels.py --dry-run --set 1=1100
+
+# Send for ten seconds, then stop and let the receiver enter failsafe.
+ros2 run crsf_radio_tools send_crsf_channels.py --duration 10 --set 1=1100
+```
+
+Pressing Ctrl-C stops the CRSF stream. Stopping the stream must be treated as a
+receiver failsafe; this script is only a fixed-channel bring-up utility and is
+not a flight-control input or an arming implementation.
+
+### ROS-independent joystick control events
+
+`joy_to_crsf.py` reads the Linux joystick API directly and therefore keeps the
+GCS joystick-to-radio path independent from ROS and DDS. Do not launch
+`joy_node` for the same controller while using this path.
+
+```bash
+ros2 run crsf_radio_tools joy_to_crsf.py \
+  --joy /dev/input/js0 \
+  --port /dev/serial/by-id/usb-1a86_USB_Single_Serial_XXXXXXXX-if00
+```
+
+Despite being installed by an ament package, the program itself has no ROS
+dependency and may also be run directly from `crsf_radio_tools/scripts`. It transports
+the existing navigation button assignments using these CRSF channels:
+
+| CRSF channel | Navigation control |
+| ---: | --- |
+| 5 | START / arm |
+| 6 | D-pad left (takeoff modifier) |
+| 7 | Circle (takeoff action) |
+| 8 | STOP: force landing, then halt after a one-second hold |
+| 9 | D-pad right (landing modifier) |
+| 10 | Square (landing action) |
+
+The receiver requires every control to be observed released after a new link
+before it can generate an event. Commands are then split by ownership:
+
+| Command | Route |
+| --- | --- |
+| ARM | Applied directly to `FlightControl` inside spinal |
+| TAKEOFF | Reliable `rc/teleop_command` event to navigation over ROS |
+| LAND | Reliable `rc/teleop_command` event to navigation over ROS |
+| Force Landing | Applied directly to `FlightControl` inside spinal |
+| HALT | Applied directly as ARM OFF inside spinal |
+
+The direct commands do not depend on the micro-ROS agent. Their normal
+`flight_config_ack` output synchronizes navigation when ROS is available.
+Only TAKEOFF and LAND use `rc/teleop_command`; `/rc/joy` remains diagnostic and
+is not consumed for control. While disarmed, aerial_robot_control periodically
+sends the static motor and UAV configuration so spinal is ready before a
+direct RC ARM request.
+
+For radio-in-the-loop simulation, set the simulation attitude controller's
+parameters to the XIAO USB CDC device:
+
+```yaml
+rc_serial_port: /dev/serial/by-id/usb-Raspberry_Pi_Pico_XXXXXXXX-if00
+rc_serial_baud: 420000
+```
+
+An empty `rc_serial_port` (the default) disables the simulation serial input.
+
 ## Generate & Build micro ROS agent
 ```bash
 source install/setup.bash  # setup.zsh if using zsh
