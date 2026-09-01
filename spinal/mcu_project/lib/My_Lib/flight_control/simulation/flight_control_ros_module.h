@@ -38,7 +38,9 @@
 #include "flight_control/flight_control.h"
 #include "flashmemory/config_flash_database.h"
 #include "flashmemory/config_flash_storage_sim.h"
-#include "rc/simulation/crsf_ros_module.h"
+#include "rc/crsf_input.h"
+#include "rc/simulation/crsf_posix_serial_transport.h"
+#include "rc/simulation/crsf_ros_adapter.h"
 #include "state_estimate/state_estimate.h"
 #include "thruster/simulation/thruster_manager.h"
 
@@ -63,7 +65,10 @@ private:
   FlightControl flight_control_;
   ConfigFlashDatabase config_flash_database_;
   ConfigFlashStorageSim config_flash_storage_;
-  CrsfRosModuleSim crsf_ros_module_;
+  CrsfPosixSerialTransport crsf_transport_;
+  CrsfFlightControlSink crsf_control_sink_;
+  CrsfInput crsf_input_;
+  CrsfRosAdapterSim crsf_ros_adapter_;
   ThrusterManager *thruster_{ nullptr };
   StateEstimate *estimator_{ nullptr };
   bool initialized_{ false };

@@ -56,7 +56,9 @@
 #include "sensors/gps/gps_ublox.h"
 #include "sensors/gps/gps_ros_module.h"
 #include "sensors/encoder/mag_encoder_ros_module.h"
-#include "rc/crsf_ros_module.h"
+#include "rc/crsf_input.h"
+#include "rc/crsf_ros_adapter.h"
+#include "rc/crsf_stm32_uart_transport.h"
 
 #include "battery_status/battery_status_ros_module.h"
 #include "servo/servo_ros_module.h"
@@ -153,7 +155,10 @@ IMU* imu_ = nullptr;
 
 BaroRosModule baro_ros_mod_;
 GpsRosModule gps_ros_mod_;
-CrsfRosModule crsf_ros_mod_;
+CrsfStm32UartTransport crsf_transport_;
+CrsfFlightControlSink crsf_control_sink_;
+CrsfInput crsf_input_;
+CrsfRosAdapter crsf_ros_adapter_;
 BatteryStatusRosModule battery_status_ros_mod_;
 ThrusterRosModule thruster_ros_mod_;
 FlightControlRosModule flight_control_ros_mod_;
@@ -436,9 +441,12 @@ int main(void)
   }
   else if (g_uart3_driver == Uart3Driver::CRSF)
   {
-    crsf_ros_mod_.init_hw(
-      &huart3, flight_control_ros_mod_.getFlightControlCore(), &flightControlMutexHandle);
-    ros_mgr_.add(&crsf_ros_mod_);
+    crsf_transport_.init(&huart3);
+    crsf_control_sink_.init(flight_control_ros_mod_.getFlightControlCore());
+    crsf_input_.init(&crsf_transport_, &crsf_control_sink_);
+    crsf_input_.setEnabled(true);
+    crsf_ros_adapter_.init(&crsf_input_);
+    ros_mgr_.add(&crsf_ros_adapter_);
   }
   estimator_ros_mod_.init_hw(imu_, selected_baro, selected_gps, &flightControlMutexHandle,
                              g_boot_config.attitude_estimation_enabled != 0U,
@@ -1452,7 +1460,12 @@ void coreTaskFunc(void const * argument)
       if (imu_ != nullptr) imu_->update();
       if (g_boot_config.barometer_enabled != 0U) baro_ros_mod_.update();
       if (g_uart3_driver == Uart3Driver::GPS) gps_ros_mod_.update();
-      else if (g_uart3_driver == Uart3Driver::CRSF) crsf_ros_mod_.update();
+      else if (g_uart3_driver == Uart3Driver::CRSF)
+        {
+          osMutexWait(flightControlMutexHandle, osWaitForever);
+          crsf_input_.update(HAL_GetTick());
+          osMutexRelease(flightControlMutexHandle);
+        }
       estimator_ros_mod_.update();
       flight_control_ros_mod_.update();
       thruster_ros_mod_.sendCommand();
@@ -1545,7 +1558,7 @@ void rosSpinTaskFunc(void const * argument)
           osMutexWait(ros_cxt_.ros_mutex, osWaitForever);
           rclc_executor_spin_some(&ros_cxt_.executor, RCL_MS_TO_NS(0));
           if (g_uart3_driver == Uart3Driver::GPS) gps_ros_mod_.publish();
-          else if (g_uart3_driver == Uart3Driver::CRSF) crsf_ros_mod_.publish();
+          else if (g_uart3_driver == Uart3Driver::CRSF) crsf_ros_adapter_.publish();
           servo_ros_mod_.publish();
           thruster_ros_mod_.publish();
           flight_control_ros_mod_.publish();
