@@ -38,7 +38,7 @@ struct TeleopChannelMap
   uint32_t stop_to_halt_ms{1000U};
 };
 
-// Converts discrete CRSF channels into one-shot navigation events.  An input
+// Converts discrete CRSF channels into one-shot FC supervisor events.  An input
 // must first be observed released after every link establishment.  This avoids
 // arming because a button was held while the receiver or transmitter booted.
 class TeleopInterpreter

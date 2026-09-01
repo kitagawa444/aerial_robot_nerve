@@ -40,6 +40,17 @@ add_library(spinal_flight_control
   ${SPINAL_DIRS}/rc/crsf_teleop.cpp
   ${SPINAL_DIRS}/rc/simulation/crsf_ros_module.cpp
   ${SPINAL_DIRS}/flight_control/flight_control.cpp
+  ${SPINAL_DIRS}/flight_control/flight_control_ros_adapter.cpp
+  ${SPINAL_DIRS}/flight_control/health/actuator_health_monitor.cpp
+  ${SPINAL_DIRS}/flight_control/health/compute_health_monitor.cpp
+  ${SPINAL_DIRS}/flight_control/health/config_health_monitor.cpp
+  ${SPINAL_DIRS}/flight_control/health/estimation_health_monitor.cpp
+  ${SPINAL_DIRS}/flight_control/health/flight_health_monitor.cpp
+  ${SPINAL_DIRS}/flight_control/health/health_manager.cpp
+  ${SPINAL_DIRS}/flight_control/health/link_health_monitor.cpp
+  ${SPINAL_DIRS}/flight_control/health/power_health_monitor.cpp
+  ${SPINAL_DIRS}/flight_control/health/sensor_health_monitor.cpp
+  ${SPINAL_DIRS}/flight_control/supervisor/flight_supervisor.cpp
   ${SPINAL_DIRS}/flight_control/attitude/attitude_control.cpp
   ${SPINAL_DIRS}/flight_control/position/position_control.cpp
   ${SPINAL_DIRS}/flight_control/simulation/flight_control_ros_module.cpp
@@ -164,6 +175,14 @@ if(BUILD_TESTING)
     test/attitude_control_test.cpp
   )
   target_link_libraries(attitude_control_test spinal_flight_control)
+  ament_add_gtest(flight_supervisor_test
+    test/flight_supervisor_test.cpp
+  )
+  target_link_libraries(flight_supervisor_test spinal_flight_control)
+  ament_add_gtest(health_manager_test
+    test/health_manager_test.cpp
+  )
+  target_link_libraries(health_manager_test spinal_flight_control)
 endif()
 
 install(PROGRAMS

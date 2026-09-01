@@ -5,12 +5,15 @@
 #include <cstddef>
 #include <cstdint>
 
+#include <std_msgs/msg/empty.h>
 #include <std_msgs/msg/u_int8.h>
 #include <std_srvs/srv/set_bool.h>
 
 #include <spinal_msgs/msg/desire_coord.h>
 #include <spinal_msgs/msg/flight_config_cmd.h>
+#include <spinal_msgs/msg/flight_status.h>
 #include <spinal_msgs/msg/four_axis_command.h>
+#include <spinal_msgs/msg/health_config.h>
 #include <spinal_msgs/msg/p_matrix_pseudo_inverse_unit.h>
 #include <spinal_msgs/msg/p_matrix_pseudo_inverse_with_inertia.h>
 #include <spinal_msgs/msg/position_control_config.h>
@@ -32,7 +35,7 @@ class FlightControlRosModule final : public RosModuleBase
 {
 public:
   FlightControlRosModule()
-    : RosModuleBase(RosModuleEntityCapacity().max_subscriptions(10).max_publishers(3).max_services(2).max_timers(0))
+    : RosModuleBase(RosModuleEntityCapacity().max_subscriptions(12).max_publishers(4).max_services(2).max_timers(0))
   {
   }
 
@@ -63,9 +66,12 @@ private:
   rcl_subscription_t torque_allocation_sub_{};
   rcl_subscription_t offset_rot_sub_{};
   rcl_subscription_t position_config_sub_{};
+  rcl_subscription_t health_config_sub_{};
   rcl_subscription_t position_setpoint_sub_{};
+  rcl_subscription_t network_heartbeat_sub_{};
 
   rcl_publisher_t config_ack_pub_{};
+  rcl_publisher_t flight_status_pub_{};
   rcl_publisher_t control_term_pub_{};
   rcl_publisher_t control_feedback_state_pub_{};
 
@@ -90,6 +96,7 @@ private:
 
   spinal_msgs__msg__DesireCoord offset_rot_msg_{};
   spinal_msgs__msg__PositionControlConfig position_config_msg_{};
+  spinal_msgs__msg__HealthConfig health_config_msg_{};
   float position_thrust_conversion_buf_[MAX_FLIGHT_CONTROL_MOTOR_NUM]{};
   float position_yaw_acceleration_conversion_buf_[MAX_FLIGHT_CONTROL_MOTOR_NUM]{};
   float position_z_p_gain_buf_[MAX_FLIGHT_CONTROL_MOTOR_NUM]{};
@@ -99,11 +106,15 @@ private:
   float position_yaw_i_gain_buf_[MAX_FLIGHT_CONTROL_MOTOR_NUM]{};
   float position_yaw_d_gain_buf_[MAX_FLIGHT_CONTROL_MOTOR_NUM]{};
   spinal_msgs__msg__PositionControlSetpoint position_setpoint_msg_{};
+  std_msgs__msg__Empty network_heartbeat_msg_{};
 
   std_msgs__msg__UInt8 config_ack_msg_{};
+  spinal_msgs__msg__FlightStatus flight_status_msg_{};
   spinal_msgs__msg__RollPitchYawTerms control_term_msg_{};
   spinal_msgs__msg__RollPitchYawTerm control_term_buf_[MAX_RPY_TERMS_SIZE]{};
   spinal_msgs__msg__RollPitchYawTerm control_feedback_state_msg_{};
+  uint32_t last_flight_status_sequence_{ 0U };
+  uint32_t last_flight_status_publish_ms_{ 0U };
 
   std_srvs__srv__SetBool_Request att_control_req_{};
   std_srvs__srv__SetBool_Response att_control_res_{};
@@ -127,7 +138,9 @@ private:
   static void torqueAllocationCallbackStatic_(const void *msgin);
   static void offsetRotCallbackStatic_(const void *msgin);
   static void positionConfigCallbackStatic_(const void *msgin);
+  static void healthConfigCallbackStatic_(const void *msgin);
   static void positionSetpointCallbackStatic_(const void *msgin);
+  static void networkHeartbeatCallbackStatic_(const void *msgin);
   static void attitudeControlCallbackStatic_(const void *req_msg, void *res_msg);
   static void positionControlCallbackStatic_(const void *req_msg, void *res_msg);
 };

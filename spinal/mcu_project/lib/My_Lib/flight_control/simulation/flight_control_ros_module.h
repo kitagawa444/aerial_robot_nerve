@@ -5,6 +5,7 @@
 #include <cstddef>
 #include <cstdint>
 #include <memory>
+#include <mutex>
 
 #include <rclcpp/rclcpp.hpp>
 #include <rclcpp_lifecycle/lifecycle_node.hpp>
@@ -12,7 +13,9 @@
 #include <sensor_msgs/msg/joint_state.hpp>
 #include <spinal_msgs/msg/desire_coord.hpp>
 #include <spinal_msgs/msg/flight_config_cmd.hpp>
+#include <spinal_msgs/msg/flight_status.hpp>
 #include <spinal_msgs/msg/four_axis_command.hpp>
+#include <spinal_msgs/msg/health_config.hpp>
 #include <spinal_msgs/msg/p_matrix_pseudo_inverse_with_inertia.hpp>
 #include <spinal_msgs/msg/position_control_config.hpp>
 #include <spinal_msgs/msg/position_control_setpoint.hpp>
@@ -22,6 +25,7 @@
 #include <spinal_msgs/msg/uav_info.hpp>
 #include <std_msgs/msg/float32.hpp>
 #include <std_msgs/msg/float32_multi_array.hpp>
+#include <std_msgs/msg/empty.hpp>
 #include <std_msgs/msg/u_int8.hpp>
 #include <std_srvs/srv/set_bool.hpp>
 
@@ -63,9 +67,12 @@ private:
   rclcpp::Subscription<spinal_msgs::msg::DesireCoord>::SharedPtr offset_rot_sub_;
   rclcpp::Subscription<std_msgs::msg::Float32>::SharedPtr sim_voltage_sub_;
   rclcpp::Subscription<spinal_msgs::msg::PositionControlConfig>::SharedPtr position_config_sub_;
+  rclcpp::Subscription<spinal_msgs::msg::HealthConfig>::SharedPtr health_config_sub_;
   rclcpp::Subscription<spinal_msgs::msg::PositionControlSetpoint>::SharedPtr position_setpoint_sub_;
+  rclcpp::Subscription<std_msgs::msg::Empty>::SharedPtr network_heartbeat_sub_;
 
   rclcpp_lifecycle::LifecyclePublisher<std_msgs::msg::UInt8>::SharedPtr config_ack_pub_;
+  rclcpp_lifecycle::LifecyclePublisher<spinal_msgs::msg::FlightStatus>::SharedPtr flight_status_pub_;
   rclcpp_lifecycle::LifecyclePublisher<spinal_msgs::msg::RollPitchYawTerms>::SharedPtr control_term_pub_;
   rclcpp_lifecycle::LifecyclePublisher<spinal_msgs::msg::RollPitchYawTerm>::SharedPtr control_feedback_state_pub_;
   rclcpp_lifecycle::LifecyclePublisher<std_msgs::msg::Float32MultiArray>::SharedPtr gyro_moment_pub_;
@@ -73,6 +80,9 @@ private:
 
   rclcpp::Service<std_srvs::srv::SetBool>::SharedPtr att_control_srv_;
   rclcpp::Service<std_srvs::srv::SetBool>::SharedPtr position_control_srv_;
+  std::mutex control_mutex_;
+  uint32_t last_flight_status_sequence_{ 0U };
+  rclcpp::Time last_flight_status_publish_time_{};
 
   void configureRosIo_();
   void flightConfigCallback_(const spinal_msgs::msg::FlightConfigCmd::SharedPtr msg);
@@ -85,7 +95,9 @@ private:
   void offsetRotCallback_(const spinal_msgs::msg::DesireCoord::SharedPtr msg);
   void simVoltageCallback_(const std_msgs::msg::Float32::SharedPtr msg);
   void positionConfigCallback_(const spinal_msgs::msg::PositionControlConfig::SharedPtr msg);
+  void healthConfigCallback_(const spinal_msgs::msg::HealthConfig::SharedPtr msg);
   void positionSetpointCallback_(const spinal_msgs::msg::PositionControlSetpoint::SharedPtr msg);
+  void networkHeartbeatCallback_(const std_msgs::msg::Empty::SharedPtr msg);
   void attitudeControlCallback_(const std::shared_ptr<std_srvs::srv::SetBool::Request> req,
                                 std::shared_ptr<std_srvs::srv::SetBool::Response> res);
   void positionControlCallback_(const std::shared_ptr<std_srvs::srv::SetBool::Request> req,

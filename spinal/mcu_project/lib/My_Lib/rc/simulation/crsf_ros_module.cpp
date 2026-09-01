@@ -148,13 +148,21 @@ void CrsfRosModuleSim::handle_rc_frame_(uint32_t now_ms)
 void CrsfRosModuleSim::publish_events_(const crsf::TeleopEvents &events)
 {
   if (events.arm) apply_direct_command_(FlightControlCommand::ARM_ON_CMD);
-  if (events.takeoff) publish_command_(crsf::TeleopCommand::Takeoff);
-  if (events.land) publish_command_(crsf::TeleopCommand::Land);
+  if (events.takeoff)
+  {
+    apply_direct_command_(FlightControlCommand::TAKEOFF_CMD);
+    publish_command_(crsf::TeleopCommand::Takeoff);
+  }
+  if (events.land)
+  {
+    apply_direct_command_(FlightControlCommand::LAND_CMD);
+    publish_command_(crsf::TeleopCommand::Land);
+  }
   if (events.force_landing)
   {
     apply_direct_command_(FlightControlCommand::FORCE_LANDING_CMD);
   }
-  if (events.halt) apply_direct_command_(FlightControlCommand::ARM_OFF_CMD);
+  if (events.halt) apply_direct_command_(FlightControlCommand::HALT_CMD);
 }
 
 void CrsfRosModuleSim::publish_command_(crsf::TeleopCommand command)
@@ -168,7 +176,7 @@ void CrsfRosModuleSim::publish_command_(crsf::TeleopCommand command)
 void CrsfRosModuleSim::apply_direct_command_(uint8_t command)
 {
   if (flight_control_ == nullptr) return;
-  if (!flight_control_->applyFlightConfig(command))
+  if (!flight_control_->requestFlightCommand(command, FlightCommandSource::RC))
   {
     RCLCPP_WARN(node_->get_logger(), "Rejected direct CRSF flight command %u", static_cast<unsigned int>(command));
   }

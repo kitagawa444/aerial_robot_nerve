@@ -2,6 +2,10 @@
 
 #include "flight_control/board/flight_control_ros_module.h"
 
+#include "flight_control/flight_control_ros_adapter.h"
+
+#include <rmw_microros/rmw_microros.h>
+
 FlightControlRosModule *FlightControlRosModule::instance_ = nullptr;
 
 void FlightControlRosModule::init_hw(StateEstimate *estimator, ThrusterManager *thruster, DirectServo *servo,
@@ -25,8 +29,11 @@ void FlightControlRosModule::create_entities(rcl_node_t &node)
   spinal_msgs__msg__TorqueAllocationMatrixInv__init(&torque_allocation_msg_);
   spinal_msgs__msg__DesireCoord__init(&offset_rot_msg_);
   spinal_msgs__msg__PositionControlConfig__init(&position_config_msg_);
+  spinal_msgs__msg__HealthConfig__init(&health_config_msg_);
   spinal_msgs__msg__PositionControlSetpoint__init(&position_setpoint_msg_);
+  std_msgs__msg__Empty__init(&network_heartbeat_msg_);
   std_msgs__msg__UInt8__init(&config_ack_msg_);
+  spinal_msgs__msg__FlightStatus__init(&flight_status_msg_);
   spinal_msgs__msg__RollPitchYawTerms__init(&control_term_msg_);
   spinal_msgs__msg__RollPitchYawTerm__init(&control_feedback_state_msg_);
   std_srvs__srv__SetBool_Request__init(&att_control_req_);
@@ -45,10 +52,18 @@ void FlightControlRosModule::create_entities(rcl_node_t &node)
                                   "position_control/config", &position_config_msg_,
                                   &FlightControlRosModule::positionConfigCallbackStatic_, ON_NEW_DATA);
 
+  (void)init_subscription_default(node, health_config_sub_, ROSIDL_GET_MSG_TYPE_SUPPORT(spinal_msgs, msg, HealthConfig),
+                                  "health/config", &health_config_msg_,
+                                  &FlightControlRosModule::healthConfigCallbackStatic_, ON_NEW_DATA);
+
   (void)init_subscription_default(node, position_setpoint_sub_,
                                   ROSIDL_GET_MSG_TYPE_SUPPORT(spinal_msgs, msg, PositionControlSetpoint),
                                   "position_control/setpoint", &position_setpoint_msg_,
                                   &FlightControlRosModule::positionSetpointCallbackStatic_, ON_NEW_DATA);
+
+  (void)init_subscription_default(node, network_heartbeat_sub_, ROSIDL_GET_MSG_TYPE_SUPPORT(std_msgs, msg, Empty),
+                                  "network/heartbeat", &network_heartbeat_msg_,
+                                  &FlightControlRosModule::networkHeartbeatCallbackStatic_, ON_NEW_DATA);
 
   (void)init_subscription_default(node, uav_info_sub_, ROSIDL_GET_MSG_TYPE_SUPPORT(spinal_msgs, msg, UavInfo),
                                   "uav_info", &uav_info_msg_, &FlightControlRosModule::uavInfoCallbackStatic_,
@@ -82,6 +97,9 @@ void FlightControlRosModule::create_entities(rcl_node_t &node)
   (void)init_publisher_default(node, config_ack_pub_, ROSIDL_GET_MSG_TYPE_SUPPORT(std_msgs, msg, UInt8),
                                "flight_config_ack");
 
+  (void)init_publisher_default(node, flight_status_pub_, ROSIDL_GET_MSG_TYPE_SUPPORT(spinal_msgs, msg, FlightStatus),
+                               "fc/flight_status");
+
   (void)init_publisher_default(node, control_term_pub_,
                                ROSIDL_GET_MSG_TYPE_SUPPORT(spinal_msgs, msg, RollPitchYawTerms), "rpy/pid");
 
@@ -100,6 +118,11 @@ void FlightControlRosModule::create_entities(rcl_node_t &node)
 void FlightControlRosModule::update()
 {
   lock_control_();
+  if (ros_ready_ == nullptr)
+    flight_control_.setRosLinkState(FlightLinkState::CONNECTING);
+  else
+    flight_control_.setRosLinkState(ros_ready_->load(std::memory_order_acquire) ? FlightLinkState::CONNECTED :
+                                                                                  FlightLinkState::DISCONNECTED);
   flight_control_.update();
   unlock_control_();
 }
@@ -116,6 +139,19 @@ void FlightControlRosModule::publish()
   {
     config_ack_msg_.data = ack;
     (void)rcl_publish(&config_ack_pub_, &config_ack_msg_, nullptr);
+  }
+
+  const FlightSupervisorStatus &status = flight_control_.getSupervisor().status();
+  const uint32_t now_ms = HAL_GetTick();
+  if (status.sequence != last_flight_status_sequence_ || now_ms - last_flight_status_publish_ms_ >= 100U)
+  {
+    const uint64_t epoch_ms = rmw_uros_epoch_millis();
+    flight_status_msg_.stamp.sec = static_cast<int32_t>(epoch_ms / 1000ULL);
+    flight_status_msg_.stamp.nanosec = static_cast<uint32_t>((epoch_ms % 1000ULL) * 1000000ULL);
+    flight_control_ros::fillFlightStatus(flight_status_msg_, status);
+    (void)rcl_publish(&flight_status_pub_, &flight_status_msg_, nullptr);
+    last_flight_status_sequence_ = status.sequence;
+    last_flight_status_publish_ms_ = now_ms;
   }
 
   AttitudeController &att = flight_control_.getAttitudeController();
@@ -191,25 +227,13 @@ void FlightControlRosModule::fillControlTerms_(const FlightControlRpyTerms &src)
 
   for (size_t i = 0; i < n; ++i)
   {
-    control_term_buf_[i].roll_p = src.motors[i].roll_p;
-    control_term_buf_[i].roll_i = src.motors[i].roll_i;
-    control_term_buf_[i].roll_d = src.motors[i].roll_d;
-    control_term_buf_[i].pitch_p = src.motors[i].pitch_p;
-    control_term_buf_[i].pitch_i = src.motors[i].pitch_i;
-    control_term_buf_[i].pitch_d = src.motors[i].pitch_d;
-    control_term_buf_[i].yaw_d = src.motors[i].yaw_d;
+    flight_control_ros::fillRollPitchYawTerm(control_term_buf_[i], src.motors[i]);
   }
 }
 
 void FlightControlRosModule::fillControlFeedback_(const FlightControlRpyTerm &src)
 {
-  control_feedback_state_msg_.roll_p = src.roll_p;
-  control_feedback_state_msg_.roll_i = src.roll_i;
-  control_feedback_state_msg_.roll_d = src.roll_d;
-  control_feedback_state_msg_.pitch_p = src.pitch_p;
-  control_feedback_state_msg_.pitch_i = src.pitch_i;
-  control_feedback_state_msg_.pitch_d = src.pitch_d;
-  control_feedback_state_msg_.yaw_d = src.yaw_d;
+  flight_control_ros::fillRollPitchYawTerm(control_feedback_state_msg_, src);
 }
 
 void FlightControlRosModule::lock_control_()
@@ -263,19 +287,8 @@ void FlightControlRosModule::fourAxisCommandCallbackStatic_(const void *msgin)
   if (instance_ == nullptr || msgin == nullptr) return;
   const auto *msg = reinterpret_cast<const spinal_msgs__msg__FourAxisCommand *>(msgin);
 
-  FlightControlFourAxisCommand cmd;
-  cmd.angles[0] = msg->angles[0];
-  cmd.angles[1] = msg->angles[1];
-  cmd.angles[2] = msg->angles[2];
-  cmd.base_thrust_count = msg->base_thrust.size > MAX_FOUR_AXIS_BASE_THRUST_SIZE ? MAX_FOUR_AXIS_BASE_THRUST_SIZE :
-                                                                                   msg->base_thrust.size;
-  for (size_t i = 0; i < cmd.base_thrust_count; ++i)
-  {
-    cmd.base_thrust[i] = msg->base_thrust.data[i];
-  }
-
   instance_->lock_control_();
-  (void)instance_->flight_control_.applyFourAxisCommand(cmd);
+  (void)flight_control_ros::applyFourAxisCommand(instance_->flight_control_, *msg);
   instance_->unlock_control_();
 }
 
@@ -284,22 +297,8 @@ void FlightControlRosModule::rpyGainCallbackStatic_(const void *msgin)
   if (instance_ == nullptr || msgin == nullptr) return;
   const auto *msg = reinterpret_cast<const spinal_msgs__msg__RollPitchYawTerms *>(msgin);
 
-  FlightControlRpyTerms gains;
-  gains.motors_count = msg->motors.size > MAX_RPY_TERMS_SIZE ? MAX_RPY_TERMS_SIZE : msg->motors.size;
-  for (size_t i = 0; i < gains.motors_count; ++i)
-  {
-    const auto &src = msg->motors.data[i];
-    gains.motors[i].roll_p = src.roll_p;
-    gains.motors[i].roll_i = src.roll_i;
-    gains.motors[i].roll_d = src.roll_d;
-    gains.motors[i].pitch_p = src.pitch_p;
-    gains.motors[i].pitch_i = src.pitch_i;
-    gains.motors[i].pitch_d = src.pitch_d;
-    gains.motors[i].yaw_d = src.yaw_d;
-  }
-
   instance_->lock_control_();
-  (void)instance_->flight_control_.applyRpyGains(gains);
+  (void)flight_control_ros::applyRpyGains(instance_->flight_control_, *msg);
   instance_->unlock_control_();
 }
 
@@ -308,22 +307,8 @@ void FlightControlRosModule::pMatrixCallbackStatic_(const void *msgin)
   if (instance_ == nullptr || msgin == nullptr) return;
   const auto *msg = reinterpret_cast<const spinal_msgs__msg__PMatrixPseudoInverseWithInertia *>(msgin);
 
-  FlightControlPMatrixPseudoInverseWithInertia dst;
-  dst.pseudo_inverse_count = msg->pseudo_inverse.size > MAX_P_MATRIX_SIZE ? MAX_P_MATRIX_SIZE :
-                                                                            msg->pseudo_inverse.size;
-  for (size_t i = 0; i < dst.pseudo_inverse_count; ++i)
-  {
-    dst.pseudo_inverse[i].r = msg->pseudo_inverse.data[i].r;
-    dst.pseudo_inverse[i].p = msg->pseudo_inverse.data[i].p;
-    dst.pseudo_inverse[i].y = msg->pseudo_inverse.data[i].y;
-  }
-  for (size_t i = 0; i < 6; ++i)
-  {
-    dst.inertia[i] = msg->inertia[i];
-  }
-
   instance_->lock_control_();
-  (void)instance_->flight_control_.applyPMatrixInertia(dst);
+  (void)flight_control_ros::applyPMatrixInertia(instance_->flight_control_, *msg);
   instance_->unlock_control_();
 }
 
@@ -332,17 +317,8 @@ void FlightControlRosModule::torqueAllocationCallbackStatic_(const void *msgin)
   if (instance_ == nullptr || msgin == nullptr) return;
   const auto *msg = reinterpret_cast<const spinal_msgs__msg__TorqueAllocationMatrixInv *>(msgin);
 
-  FlightControlTorqueAllocationMatrixInv dst;
-  dst.rows_count = msg->rows.size > MAX_TORQUE_ALLOC_SIZE ? MAX_TORQUE_ALLOC_SIZE : msg->rows.size;
-  for (size_t i = 0; i < dst.rows_count; ++i)
-  {
-    dst.rows[i].x = msg->rows.data[i].x;
-    dst.rows[i].y = msg->rows.data[i].y;
-    dst.rows[i].z = msg->rows.data[i].z;
-  }
-
   instance_->lock_control_();
-  (void)instance_->flight_control_.applyTorqueAllocationMatrixInv(dst);
+  (void)flight_control_ros::applyTorqueAllocationMatrixInv(instance_->flight_control_, *msg);
   instance_->unlock_control_();
 }
 
@@ -351,13 +327,8 @@ void FlightControlRosModule::offsetRotCallbackStatic_(const void *msgin)
   if (instance_ == nullptr || msgin == nullptr) return;
   const auto *msg = reinterpret_cast<const spinal_msgs__msg__DesireCoord *>(msgin);
 
-  FlightControlDesireCoord dst;
-  dst.roll = msg->roll;
-  dst.pitch = msg->pitch;
-  dst.yaw = msg->yaw;
-
   instance_->lock_control_();
-  instance_->flight_control_.applyOffsetRotation(dst);
+  flight_control_ros::applyOffsetRotation(instance_->flight_control_, *msg);
   instance_->unlock_control_();
 }
 
@@ -365,64 +336,18 @@ void FlightControlRosModule::positionConfigCallbackStatic_(const void *msgin)
 {
   if (instance_ == nullptr || msgin == nullptr) return;
   const auto *msg = reinterpret_cast<const spinal_msgs__msg__PositionControlConfig *>(msgin);
-  const size_t motor_count = msg->vertical_acceleration_to_thrust.size;
-  if (msg->use_lqi_gains &&
-      (msg->yaw_acceleration_to_thrust.size != motor_count || msg->z_p_gain.size != motor_count ||
-       msg->z_i_gain.size != motor_count || msg->z_d_gain.size != motor_count || msg->yaw_p_gain.size != motor_count ||
-       msg->yaw_i_gain.size != motor_count || msg->yaw_d_gain.size != motor_count))
-  {
-    return;
-  }
-  PositionControlConfig config;
-  for (size_t axis = 0; axis < 3; ++axis)
-  {
-    config.position_p[axis] = msg->position_p[axis];
-    config.position_i[axis] = msg->position_i[axis];
-    config.velocity_d[axis] = msg->velocity_d[axis];
-    config.limit_sum[axis] = msg->limit_sum[axis];
-    config.limit_p[axis] = msg->limit_p[axis];
-    config.limit_i[axis] = msg->limit_i[axis];
-    config.limit_d[axis] = msg->limit_d[axis];
-    config.limit_err_p[axis] = msg->limit_err_p[axis];
-    config.limit_err_d[axis] = msg->limit_err_d[axis];
-    config.integral_limit[axis] = msg->integral_limit[axis];
-  }
-  config.yaw_p = msg->yaw_p;
-  config.yaw_i = msg->yaw_i;
-  config.yaw_limit_sum = msg->yaw_limit_sum;
-  config.yaw_limit_err_p = msg->yaw_limit_err_p;
-  config.yaw_limit_err_i = msg->yaw_limit_err_i;
-  config.yaw_limit_err_d = msg->yaw_limit_err_d;
-  config.max_horizontal_acceleration = msg->max_horizontal_acceleration;
-  config.max_vertical_acceleration = msg->max_vertical_acceleration;
-  config.max_tilt_angle = msg->max_tilt_angle;
-  config.motor_count = motor_count > MAX_FLIGHT_CONTROL_MOTOR_NUM ? MAX_FLIGHT_CONTROL_MOTOR_NUM : motor_count;
-  for (size_t motor = 0; motor < config.motor_count; ++motor)
-  {
-    config.vertical_acceleration_to_thrust[motor] = msg->vertical_acceleration_to_thrust.data[motor];
-    if (motor < msg->yaw_acceleration_to_thrust.size)
-      config.yaw_acceleration_to_thrust[motor] = msg->yaw_acceleration_to_thrust.data[motor];
-    if (motor < msg->z_p_gain.size) config.z_p_gain[motor] = msg->z_p_gain.data[motor];
-    if (motor < msg->z_i_gain.size) config.z_i_gain[motor] = msg->z_i_gain.data[motor];
-    if (motor < msg->z_d_gain.size) config.z_d_gain[motor] = msg->z_d_gain.data[motor];
-    if (motor < msg->yaw_p_gain.size) config.yaw_p_gain[motor] = msg->yaw_p_gain.data[motor];
-    if (motor < msg->yaw_i_gain.size) config.yaw_i_gain[motor] = msg->yaw_i_gain.data[motor];
-    if (motor < msg->yaw_d_gain.size) config.yaw_d_gain[motor] = msg->yaw_d_gain.data[motor];
-  }
-  config.use_lqi_gains = msg->use_lqi_gains;
-  config.yaw_rate_feedback_on_spinal = msg->yaw_rate_feedback_on_spinal;
-  config.start_roll_pitch_integration_height = msg->start_roll_pitch_integration_height;
-  config.landing_err_z = msg->landing_err_z;
-  config.safe_landing_height = msg->safe_landing_height;
-  config.setpoint_timeout_ms = msg->setpoint_timeout_ms;
-  config.rc_max_horizontal_velocity = msg->rc_max_horizontal_velocity;
-  config.rc_max_vertical_velocity = msg->rc_max_vertical_velocity;
-  config.rc_max_yaw_rate = msg->rc_max_yaw_rate;
-  config.rc_deadzone = msg->rc_deadzone;
-  config.rc_timeout_ms = msg->rc_timeout_ms;
 
   instance_->lock_control_();
-  (void)instance_->flight_control_.applyPositionControlConfig(config);
+  (void)flight_control_ros::applyPositionControlConfig(instance_->flight_control_, *msg);
+  instance_->unlock_control_();
+}
+
+void FlightControlRosModule::healthConfigCallbackStatic_(const void *msgin)
+{
+  if (instance_ == nullptr || msgin == nullptr) return;
+  const auto *msg = reinterpret_cast<const spinal_msgs__msg__HealthConfig *>(msgin);
+  instance_->lock_control_();
+  (void)flight_control_ros::applyHealthConfig(instance_->flight_control_, *msg);
   instance_->unlock_control_();
 }
 
@@ -430,21 +355,18 @@ void FlightControlRosModule::positionSetpointCallbackStatic_(const void *msgin)
 {
   if (instance_ == nullptr || msgin == nullptr) return;
   const auto *msg = reinterpret_cast<const spinal_msgs__msg__PositionControlSetpoint *>(msgin);
-  PositionControlSetpoint setpoint;
-  setpoint.position = ap::Vector3f(msg->position[0], msg->position[1], msg->position[2]);
-  setpoint.velocity = ap::Vector3f(msg->velocity[0], msg->velocity[1], msg->velocity[2]);
-  setpoint.acceleration = ap::Vector3f(msg->acceleration[0], msg->acceleration[1], msg->acceleration[2]);
-  setpoint.yaw = msg->yaw;
-  setpoint.yaw_rate = msg->yaw_rate;
-  setpoint.yaw_acceleration = msg->yaw_acceleration;
-  setpoint.initial_height = msg->initial_height;
-  setpoint.horizontal_control_mode = msg->horizontal_control_mode;
-  setpoint.active = msg->active;
-  setpoint.manual_control_allowed = msg->manual_control_allowed;
-  setpoint.landing = msg->landing;
 
   instance_->lock_control_();
-  (void)instance_->flight_control_.applyPositionControlSetpoint(setpoint);
+  (void)flight_control_ros::applyPositionControlSetpoint(instance_->flight_control_, *msg);
+  instance_->unlock_control_();
+}
+
+void FlightControlRosModule::networkHeartbeatCallbackStatic_(const void *msgin)
+{
+  if (instance_ == nullptr || msgin == nullptr) return;
+
+  instance_->lock_control_();
+  instance_->flight_control_.noteNetworkHeartbeat();
   instance_->unlock_control_();
 }
 

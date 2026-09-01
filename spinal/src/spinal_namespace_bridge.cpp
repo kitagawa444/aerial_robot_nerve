@@ -48,6 +48,7 @@ bool parse_spec(const std::string &text, TopicSpec &spec)
 const std::vector<std::string> kDefaultRootToNamespaceTopics = {
   "imu:spinal_msgs/msg/Imu",
   "flight_config_ack:std_msgs/msg/UInt8",
+  "fc/flight_status:spinal_msgs/msg/FlightStatus",
   "rpy/pid:spinal_msgs/msg/RollPitchYawTerms",
   "rpy/feedback_state:spinal_msgs/msg/RollPitchYawTerm",
   "motor_pwms:spinal_msgs/msg/Pwms",
@@ -78,7 +79,9 @@ const std::vector<std::string> kDefaultNamespaceToRootTopics = {
   "set_adc_scale:std_msgs/msg/Float32",
   "external_state_measurement:spinal_msgs/msg/ExternalStateMeasurement",
   "position_control/config:spinal_msgs/msg/PositionControlConfig",
+  "health/config:spinal_msgs/msg/HealthConfig",
   "position_control/setpoint:spinal_msgs/msg/PositionControlSetpoint",
+  "network/heartbeat:std_msgs/msg/Empty",
 };
 }  // namespace
 

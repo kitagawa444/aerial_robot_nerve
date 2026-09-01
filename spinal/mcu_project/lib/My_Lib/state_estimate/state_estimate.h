@@ -261,6 +261,7 @@ public:
   bool attitudeEnabled() const { return attitude_estimate_flag_; }
   bool altitudeEnabled() const { return altitude_estimate_flag_; }
   bool posEnabled() const { return pos_estimate_flag_; }
+  uint32_t lastImuUpdateTimeMs() const { return last_imu_update_time_ms_; }
 
 private:
   static bool finiteVector_(const ap::Vector3f &value)

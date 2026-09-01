@@ -24,14 +24,21 @@ void CrsfRosModule::update()
                                                                  now_ms);
 
     if (events.arm) apply_direct_command_(FlightControlCommand::ARM_ON_CMD);
+    if (events.takeoff)
+    {
+      apply_direct_command_(FlightControlCommand::TAKEOFF_CMD);
+      queue_ros_command_(pending_takeoff_ms_, now_ms);
+    }
+    if (events.land)
+    {
+      apply_direct_command_(FlightControlCommand::LAND_CMD);
+      queue_ros_command_(pending_land_ms_, now_ms);
+    }
     if (events.force_landing)
     {
       apply_direct_command_(FlightControlCommand::FORCE_LANDING_CMD);
     }
-    if (events.halt) apply_direct_command_(FlightControlCommand::ARM_OFF_CMD);
-
-    if (events.takeoff) queue_ros_command_(pending_takeoff_ms_, now_ms);
-    if (events.land) queue_ros_command_(pending_land_ms_, now_ms);
+    if (events.halt) apply_direct_command_(FlightControlCommand::HALT_CMD);
     last_teleop_rc_sequence_ = snapshot.rc_frame_sequence;
   }
   else if (!snapshot.connected)
@@ -121,7 +128,7 @@ void CrsfRosModule::apply_direct_command_(uint8_t command)
 {
   if (flight_control_ == nullptr) return;
   lock_control_();
-  (void)flight_control_->applyFlightConfig(command);
+  (void)flight_control_->requestFlightCommand(command, FlightCommandSource::RC);
   unlock_control_();
 }
 
