@@ -5,6 +5,7 @@
 #include "flight_control/flight_control_ros_adapter.h"
 
 #include <algorithm>
+#include <chrono>
 #include <functional>
 
 namespace
@@ -26,6 +27,12 @@ ConfigFlashSupport simulationSupport()
   support.position_estimation = true;
   support.flight_control = true;
   return support;
+}
+
+uint32_t steadyTimeMs()
+{
+  using namespace std::chrono;
+  return static_cast<uint32_t>(duration_cast<milliseconds>(steady_clock::now().time_since_epoch()).count());
 }
 }  // namespace
 
@@ -58,9 +65,11 @@ void FlightControlRosModule::init(const std::shared_ptr<rclcpp_lifecycle::Lifecy
   }
   const std::string rc_serial_port = node_->get_parameter("rc_serial_port").as_string();
   const int64_t rc_serial_baud = node_->get_parameter("rc_serial_baud").as_int();
-  crsf_ros_module_.init(node_, rc_serial_port,
-                        rc_serial_baud > 0 ? static_cast<uint32_t>(rc_serial_baud) : crsf::DEFAULT_BAUD_RATE,
-                        &flight_control_);
+  crsf_transport_.configure(rc_serial_port,
+                            rc_serial_baud > 0 ? static_cast<uint32_t>(rc_serial_baud) : crsf::DEFAULT_BAUD_RATE);
+  crsf_control_sink_.init(&flight_control_);
+  crsf_input_.init(&crsf_transport_, &crsf_control_sink_);
+  crsf_ros_adapter_.init(node_, &crsf_input_);
   const ConfigFlashPayload &boot_config = config_flash_database_.activeConfiguration();
   if (estimator != nullptr)
   {
@@ -68,7 +77,7 @@ void FlightControlRosModule::init(const std::shared_ptr<rclcpp_lifecycle::Lifecy
                                    boot_config.height_estimation_enabled != 0U,
                                    boot_config.position_estimation_enabled != 0U);
   }
-  crsf_ros_module_.setEnabled(boot_config.uart3_driver == Uart3Driver::CRSF);
+  crsf_input_.setEnabled(boot_config.uart3_driver == Uart3Driver::CRSF);
   flight_control_.setEnabled(boot_config.flight_control_enabled != 0U);
   if (thruster_ != nullptr) thruster_->setOutputEnabled(boot_config.motor_output_driver != MotorOutputDriver::DISABLED);
 
@@ -83,7 +92,7 @@ void FlightControlRosModule::update()
 {
   const std::lock_guard<std::mutex> lock(control_mutex_);
   flight_control_.setRosLinkState(FlightLinkState::CONNECTED);
-  crsf_ros_module_.update();
+  crsf_input_.update(steadyTimeMs());
   flight_control_.update();
 }
 
@@ -121,6 +130,8 @@ void FlightControlRosModule::publish()
 {
   if (!node_) return;
   const std::lock_guard<std::mutex> lock(control_mutex_);
+
+  crsf_ros_adapter_.publish();
 
   uint8_t ack = 0;
   if (flight_control_.consumeConfigAck(ack) && config_ack_pub_)
@@ -621,7 +632,7 @@ void FlightControlRosModule::rebootCallback_(const std::shared_ptr<std_srvs::srv
     estimator_->configureSubsystems(applied.attitude_estimation_enabled != 0U, applied.height_estimation_enabled != 0U,
                                     applied.position_estimation_enabled != 0U);
   }
-  crsf_ros_module_.setEnabled(applied.uart3_driver == Uart3Driver::CRSF);
+  crsf_input_.setEnabled(applied.uart3_driver == Uart3Driver::CRSF);
   flight_control_.setEnabled(applied.flight_control_enabled != 0U);
   if (thruster_ != nullptr) thruster_->setOutputEnabled(applied.motor_output_driver != MotorOutputDriver::DISABLED);
   res->success = true;
