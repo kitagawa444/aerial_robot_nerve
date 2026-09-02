@@ -61,6 +61,21 @@
     </qtgui>
   </class>
   <class
+      name="SpinalLinkMonitor"
+      type="spinal.link_monitor.LinkMonitor"
+      base_class_type="rqt_gui_py::Plugin">
+    <description>Monitor Micro-USB, ROS, Wi-Fi/GCS, CRSF, and ACK delivery</description>
+    <qtgui>
+      <group>
+        <icon type="theme">folder</icon>
+        <label>aerial robot</label>
+      </group>
+      <label>Spinal Link Monitor</label>
+      <icon type="theme">network-wired</icon>
+      <statustip>Show communication link state, quality, and delivery statistics</statustip>
+    </qtgui>
+  </class>
+  <class
       name="SpinalParameterDatabase"
       type="spinal.parameter_database.ParameterDatabase"
       base_class_type="rqt_gui_py::Plugin">

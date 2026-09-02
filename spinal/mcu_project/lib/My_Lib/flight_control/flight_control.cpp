@@ -257,7 +257,7 @@ bool FlightControl::applyHealthConfig(const HealthManagerConfig &config)
   return true;
 }
 
-bool FlightControl::applyPositionControlSetpoint(const PositionControlSetpoint &setpoint)
+bool FlightControl::applyPositionControlSetpoint(const PositionControlSetpoint &setpoint, uint8_t source)
 {
   if (!position_controller_.configured()) return false;
   external_position_setpoint_ = setpoint;
@@ -273,7 +273,7 @@ bool FlightControl::applyPositionControlSetpoint(const PositionControlSetpoint &
     accepted.landing = false;
     position_controller_.setSetpoint(accepted, last_external_setpoint_ms_);
     using_external_position_setpoint_ = true;
-    supervisor_.noteExternalSetpoint();
+    supervisor_.noteExternalSetpoint(source);
   }
   return true;
 }

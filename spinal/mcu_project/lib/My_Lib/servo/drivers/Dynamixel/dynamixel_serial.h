@@ -137,9 +137,9 @@
 //#########################################################################
 //############################ Specials ###################################
 
-#define NONE					0x00
-#define READ					0x01
-#define ALL						0x02
+#define DX_RETURN_NONE			0x00
+#define DX_RETURN_READ			0x01
+#define DX_RETURN_ALL				0x02
 
 #define DX_BROADCAST_ID           	0xFE
 

@@ -15,8 +15,11 @@
   <depend>rclcpp_lifecycle</depend>
   <depend>spinal_msgs</depend>
   <depend>sensor_msgs</depend>
+  <depend>nav_msgs</depend>
   <depend>std_msgs</depend>
   <depend>std_srvs</depend>
+  <depend>diagnostic_msgs</depend>
+  <depend>fastrtps</depend>
 
   <exec_depend>rclpy</exec_depend>
   <exec_depend>spinal_firmware</exec_depend>
@@ -27,14 +30,13 @@
   <exec_depend>python_qt_binding</exec_depend>
   <exec_depend>ament_index_python</exec_depend>
   <exec_depend>tf_transformations</exec_depend>
-  <exec_depend>micro_ros_agent</exec_depend>
-
   <exec_depend>python3-numpy</exec_depend>
   <exec_depend>python3-matplotlib</exec_depend>
   <exec_depend>python3-serial</exec_depend>
 
   <test_depend>ament_cmake_gtest</test_depend>
   <test_depend>ament_cmake_pytest</test_depend>
+  <test_depend>python3-pytest</test_depend>
 
   <export>
     <build_type>ament_cmake</build_type>

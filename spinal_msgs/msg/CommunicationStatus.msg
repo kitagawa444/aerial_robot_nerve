@@ -1,0 +1,6 @@
+std_msgs/Header header
+spinal_msgs/CommunicationLinkStatus micro_usb
+spinal_msgs/CommunicationLinkStatus ros
+spinal_msgs/CommunicationLinkStatus wifi
+spinal_msgs/CommunicationLinkStatus rc
+spinal_msgs/CommunicationAckStatus ack

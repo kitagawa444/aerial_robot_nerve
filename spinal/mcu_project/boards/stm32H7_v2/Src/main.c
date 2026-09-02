@@ -28,46 +28,26 @@
 #include <cstring>
 #include <string>
 
-/* #include <ros.h> */
-#include <microros_transport_stm32.h>
-#include <rcl/rcl.h>
-#include <rclc/rclc.h>
-#include <rclc/executor.h>
-#include <rmw_microros/rmw_microros.h>
-#include <ros_utils/ros_module_base.hpp>
-#include <ros_utils/ros_module_manager.hpp>
-#include <ros_utils/ros_context.hpp>
-
-#include <std_msgs/msg/u_int32.h>
-#include <std_msgs/msg/u_int8.h>
-/* #include <std_msgs/String.h> */
-/* #include <std_msgs/Empty.h> */
-/* #include <spinal/ServoControlCmd.h> */
-#include <spinal_msgs/msg/imu.h>
-
+#include "communication/spinal_link_xrce_adapter.h"
+#include "xrce_dds/xrce_dds_client.h"
 #include "flashmemory/application_capabilities.h"
 #include "flashmemory/config_flash_database.h"
 #include "flashmemory/config_flash_storage.h"
 #include "flashmemory/flashmemory.h"
 #include "sensors/imu/drivers/mpu9250/imu_mpu9250.h"
 #include "sensors/imu/drivers/icm20948/icm_20948.h"
-#include "sensors/imu/imu_ros_module.h"
-#include "sensors/baro/baro_ros_module.h"
+#include "sensors/baro/baro_ms5611.h"
 #include "sensors/gps/gps_ublox.h"
-#include "sensors/gps/gps_ros_module.h"
-#include "sensors/encoder/mag_encoder_ros_module.h"
 #include "rc/crsf_input.h"
-#include "rc/crsf_ros_adapter.h"
 #include "rc/crsf_stm32_uart_transport.h"
 
-#include "battery_status/battery_status_ros_module.h"
-#include "servo/servo_ros_module.h"
-#include "thruster/board/thruster_ros_module.h"
-#include "flight_control/board/flight_control_ros_module.h"
-#include "bootloader/bootloader_ros_module.h"
+#include "battery_status/battery_status.h"
+#include "servo/servo.h"
+#include "thruster/board/thruster_manager.h"
+#include "flight_control/flight_control.h"
 #include "bootloader/system_bootloader.h"
 
-#include "state_estimate/state_estimate_ros_module.h"
+#include "state_estimate/state_estimate.h"
 
 /* #include <Spine/spine.h> */
 
@@ -82,15 +62,6 @@
 
 /* Private define ------------------------------------------------------------*/
 /* USER CODE BEGIN PD */
-#define MICROROS_INIT_PING_TIMEOUT_MS      100
-#define MICROROS_INIT_PING_ATTEMPTS        1
-#define MICROROS_MONITOR_PING_INTERVAL_MS  500
-#define MICROROS_MONITOR_PING_TIMEOUT_MS   20
-#define MICROROS_MONITOR_PING_ATTEMPTS     1
-#define MICROROS_MONITOR_SESSION_TIMEOUT_MS 20
-#define MICROROS_MONITOR_SESSION_FAIL_LIMIT 2
-#define MICROROS_ENTITY_CREATION_TIMEOUT_MS 100
-#define MICROROS_ENTITY_DESTROY_TIMEOUT_MS 20
 /* USER CODE END PD */
 
 /* Private macro -------------------------------------------------------------*/
@@ -126,7 +97,7 @@ DMA_HandleTypeDef hdma_usart3_rx;
 DMA_HandleTypeDef hdma_usart6_rx;
 
 osThreadId coreTaskHandle;
-osThreadId rosSpinTaskHandle;
+osThreadId communicationTaskHandle;
 osThreadId idleTaskHandle;
 osThreadId imuPublishTaskHandle;
 osThreadId voltageHandle;
@@ -140,37 +111,32 @@ osSemaphoreId uartTxSemHandle;
 /* USER CODE BEGIN PV */
 osMailQId canMsgMailHandle;
 
-/* micro ros */
-static RosContext ros_cxt_;
-static RosModuleManager<9> ros_mgr_;
 ConfigFlashPayload g_boot_config = ApplicationCapability::defaults();
 uint8_t g_uart3_driver = DEFAULT_UART3_DRIVER;
 ConfigFlashDatabase config_flash_database_;
 
 /* /\* sensor instances *\/ */
-ImuRosModule imu_ros_mod_;
 IMUOnboard mpu9250_imu_;
 ICM20948 icm20948_imu_;
 IMU* imu_ = nullptr;
 
-BaroRosModule baro_ros_mod_;
-GpsRosModule gps_ros_mod_;
+Baro baro_;
+GPS gps_;
 CrsfStm32UartTransport crsf_transport_;
 CrsfFlightControlSink crsf_control_sink_;
 CrsfInput crsf_input_;
-CrsfRosAdapter crsf_ros_adapter_;
-BatteryStatusRosModule battery_status_ros_mod_;
-ThrusterRosModule thruster_ros_mod_;
-FlightControlRosModule flight_control_ros_mod_;
-BootloaderRosModule bootloader_ros_mod_;
+BatteryStatus battery_status_;
+ThrusterManager thruster_;
+FlightControl flight_control_;
 
 /* servo instance */
-DirectServoRosModule servo_ros_mod_;
+DirectServo servo_;
 /* DShot dshot_; */
 
 
-StateEstimateRosModule estimator_ros_mod_;
-/* FlightControl controller_; */
+StateEstimate estimator_;
+XrceDdsClient xrce_client_;
+SpinalLinkXrceAdapter spinal_link_xrce_adapter_;
 
 /* USER CODE END PV */
 
@@ -191,7 +157,7 @@ static void MX_TIM4_Init(void);
 static void MX_USART6_UART_Init(void);
 static void MX_USART2_UART_Init(void);
 void coreTaskFunc(void const * argument);
-void rosSpinTaskFunc(void const * argument);
+void communicationTaskFunc(void const * argument);
 void idleTaskFunc(void const * argument);
 void imuPublishTaskFunc(void const * argument);
 void voltageTask(void const * argument);
@@ -206,101 +172,6 @@ void coreTaskEvokeCb(void const * argument);
 /* Private user code ---------------------------------------------------------*/
 /* USER CODE BEGIN 0 */
 
-static bool ensure_ros_mutex_created()
-{
-  if (ros_cxt_.ros_mutex != nullptr) return true;
-
-#if (osCMSIS < 0x20000U)
-  osMutexDef(rosMutex);
-  ros_cxt_.ros_mutex = osMutexCreate(osMutex(rosMutex));
-#else
-  static const osMutexAttr_t attr = { .name = "rosMutex" };
-  ros_cxt_.ros_mutex = osMutexNew(&attr);
-#endif
-
-  if (ros_cxt_.ros_mutex == nullptr) {
-    Error_Handler();
-  }
-  return true;
-}
-
-static void microros_configure_context_timeouts(void)
-{
-  rmw_context_t* rmw_context = rcl_context_get_rmw_context(&ros_cxt_.support.context);
-  if (rmw_context == nullptr) {
-    return;
-  }
-
-  (void)rmw_uros_set_context_entity_creation_session_timeout(
-    rmw_context,
-    MICROROS_ENTITY_CREATION_TIMEOUT_MS);
-  (void)rmw_uros_set_context_entity_destroy_session_timeout(
-    rmw_context,
-    MICROROS_ENTITY_DESTROY_TIMEOUT_MS);
-}
-
-static void microros_init_all(void)
-{
-  // 0) Create muxte for ros
-  ensure_ros_mutex_created();
-
-  ros_cxt_.ready.store(false, std::memory_order_release);
-  ros_cxt_.support = rclc_support_t{};
-  ros_cxt_.node = rcl_get_zero_initialized_node();
-  ros_cxt_.executor = rclc_executor_get_zero_initialized_executor();
-
-  // 1) Register custom transport (must be done before rclc_support_init)
-  microros_transport_init();
-  
-  while (rmw_uros_ping_agent(MICROROS_INIT_PING_TIMEOUT_MS,
-                             MICROROS_INIT_PING_ATTEMPTS) != RMW_RET_OK)
-    {
-      osDelay(100);
-    }
-
-  // 2) Init rcl/rclc
-  ros_cxt_.allocator = rcl_get_default_allocator();
-  rclc_support_init(&ros_cxt_.support, 0, NULL, &ros_cxt_.allocator);
-  microros_configure_context_timeouts();
-
-  rclc_node_init_default(&ros_cxt_.node, "stm32_node", "", &ros_cxt_.support);
-
-  ros_mgr_.set_ros_mutex_all(&ros_cxt_.ros_mutex);
-  ros_mgr_.set_ros_ready_all(&ros_cxt_.ready);
-
-  // 3) Create pub & sub of all ros modules
-  osMutexWait(ros_cxt_.ros_mutex, osWaitForever);
-  ros_mgr_.create_all(ros_cxt_.node);
-
-  // 4) Count number of handles
-  const size_t N = ros_mgr_.total_executor_handles();
-  rclc_executor_init(&ros_cxt_.executor, &ros_cxt_.support.context, N, &ros_cxt_.allocator);
-
-  // 5) Register to executor
-  ros_mgr_.add_all(ros_cxt_.executor);
-
-  ros_cxt_.ready.store(true, std::memory_order_release);
-  osMutexRelease(ros_cxt_.ros_mutex);
-}
-
-static void microros_fini_all(void)
-{
-  osMutexWait(ros_cxt_.ros_mutex, osWaitForever);
-  ros_cxt_.ready.store(false, std::memory_order_release);
-
-  // executor -> module destroy -> node/support
-  (void)rclc_executor_fini(&ros_cxt_.executor);
-  ros_mgr_.destroy_all(ros_cxt_.node);
-
-  (void)rcl_node_fini(&ros_cxt_.node);
-  (void)rclc_support_fini(&ros_cxt_.support);
-
-  ros_cxt_.executor = rclc_executor_get_zero_initialized_executor();
-  ros_cxt_.node = rcl_get_zero_initialized_node();
-  ros_cxt_.support = rclc_support_t{};
-
-  osMutexRelease(ros_cxt_.ros_mutex);
-}
 /* USER CODE END 0 */
 
 /**
@@ -405,8 +276,6 @@ int main(void)
   FlashMemory::read();
 #endif
 
-  ensure_ros_mutex_created();
-  
   if (g_boot_config.imu_driver == ImuDriver::MPU9250)
   {
     mpu9250_imu_.init(&hspi1, &hi2c3, IMUCS_GPIO_Port, IMUCS_Pin, LED0_GPIO_Port, LED0_Pin);
@@ -417,57 +286,35 @@ int main(void)
     icm20948_imu_.init(&hspi1, &hi2c3, IMUCS_GPIO_Port, IMUCS_Pin, LED0_GPIO_Port, LED0_Pin);
     imu_ = &icm20948_imu_;
   }
-  if (imu_ != nullptr)
-  {
-    imu_ros_mod_.addImu(imu_);
-    ros_mgr_.add(&imu_ros_mod_);
-  }
-
   Baro* selected_baro = nullptr;
   if (g_boot_config.barometer_enabled != 0U)
   {
-    baro_ros_mod_.init_hw(&hi2c1, BAROCS_GPIO_Port, BAROCS_Pin);
-    ros_mgr_.add(&baro_ros_mod_);
-    selected_baro = baro_ros_mod_.getBaroHw();
+    baro_.init_hw(&hi2c1, BAROCS_GPIO_Port, BAROCS_Pin);
+    selected_baro = &baro_;
   }
 
   GPS* selected_gps = nullptr;
 
   if (g_uart3_driver == Uart3Driver::GPS)
   {
-    gps_ros_mod_.init_hw(&huart3, LED2_GPIO_Port, LED2_Pin);
-    ros_mgr_.add(&gps_ros_mod_);
-    selected_gps = gps_ros_mod_.getGpsHw();
+    gps_.init(&huart3, LED2_GPIO_Port, LED2_Pin);
+    selected_gps = &gps_;
   }
   else if (g_uart3_driver == Uart3Driver::CRSF)
   {
     crsf_transport_.init(&huart3);
-    crsf_control_sink_.init(flight_control_ros_mod_.getFlightControlCore());
-    crsf_input_.init(&crsf_transport_, &crsf_control_sink_);
-    crsf_input_.setEnabled(true);
-    crsf_ros_adapter_.init(&crsf_input_);
-    ros_mgr_.add(&crsf_ros_adapter_);
   }
-  estimator_ros_mod_.init_hw(imu_, selected_baro, selected_gps, &flightControlMutexHandle,
-                             g_boot_config.attitude_estimation_enabled != 0U,
-                             g_boot_config.height_estimation_enabled != 0U,
-                             g_boot_config.position_estimation_enabled != 0U);
-  ros_mgr_.add(&estimator_ros_mod_);
+  estimator_.init(imu_, selected_baro, selected_gps, g_boot_config.attitude_estimation_enabled != 0U,
+                  g_boot_config.height_estimation_enabled != 0U,
+                  g_boot_config.position_estimation_enabled != 0U);
 
 /*   DShot* dshotptr = nullptr; */
-  battery_status_ros_mod_.init_hw(&hadc1,
-                                  g_boot_config.motor_output_driver != MotorOutputDriver::DRIVER_DSHOT);
-  ros_mgr_.add(&battery_status_ros_mod_);
+  battery_status_.init(&hadc1, g_boot_config.motor_output_driver != MotorOutputDriver::DRIVER_DSHOT);
 
-  thruster_ros_mod_.init_hw(&htim1, &htim4, g_boot_config.motor_output_driver);
+  thruster_.init(&htim1, &htim4, g_boot_config.motor_output_driver);
   if (g_boot_config.motor_output_driver == MotorOutputDriver::DRIVER_DSHOT)
-    thruster_ros_mod_.init_dshot_telemetry(&huart6);
-  thruster_ros_mod_.setBatteryStatus(battery_status_ros_mod_.getBatteryCore());
-  ros_mgr_.add(&thruster_ros_mod_);
-
-  bootloader_ros_mod_.init_hw(
-    thruster_ros_mod_.getThrusterManager(), flight_control_ros_mod_.getFlightControlCore());
-  ros_mgr_.add(&bootloader_ros_mod_);
+    thruster_.initDShotTelemetry(&huart6);
+  thruster_.setBatteryStatus(&battery_status_);
 
 /* #if DSHOT */
   /* estimator_.init(&imu_, &baro_, &gps_, &node, &executor);  // imu + baro + gps => att + alt + pos(xy) */
@@ -480,26 +327,23 @@ int main(void)
 
   FlashMemory::read(); // battery scale and IMU calib data (including IMU in neurons)
 
-  const bool servo_connect = servo_ros_mod_.init_hw(&huart2, nullptr, g_boot_config.servo_driver);
-  // Keep the board-configuration services available even when no servo is
-  // detected at boot. Runtime servo I/O remains disabled by servo_connect.
-  ros_mgr_.add(&servo_ros_mod_);
+  const bool servo_connect = servo_.init(&huart2, nullptr, g_boot_config.servo_driver);
 
   // Keep the legacy calibration/servo layout intact and append the versioned
   // flight parameter image after every previously registered flash value.
   FlashMemory::addValue(
-    flight_control_ros_mod_.getFlightControlCore()->parameterStorageData(),
-    flight_control_ros_mod_.getFlightControlCore()->parameterStorageSize());
+    flight_control_.parameterStorageData(),
+    flight_control_.parameterStorageSize());
   FlashMemory::read();
 
-  flight_control_ros_mod_.init_hw(
-    estimator_ros_mod_.getStateEstimateCore(),
-    thruster_ros_mod_.getThrusterManager(),
-    servo_connect ? servo_ros_mod_.getServoCore() : nullptr,
-    &flightControlMutexHandle,
-    &config_flash_database_);
-  flight_control_ros_mod_.getFlightControlCore()->setEnabled(g_boot_config.flight_control_enabled != 0U);
-  ros_mgr_.add(&flight_control_ros_mod_);
+  flight_control_.init(&estimator_, &thruster_, servo_connect ? &servo_ : nullptr);
+  flight_control_.setEnabled(g_boot_config.flight_control_enabled != 0U);
+  if (g_uart3_driver == Uart3Driver::CRSF)
+  {
+    crsf_control_sink_.init(&flight_control_);
+    crsf_input_.init(&crsf_transport_, &crsf_control_sink_);
+    crsf_input_.setEnabled(true);
+  }
 
 /*   bool nerve_connect = Spine::init(&hfdcan1, &nh_, &estimator_, &controller_, LED1_GPIO_Port, LED1_Pin); */
 
@@ -529,6 +373,12 @@ int main(void)
   osSemaphoreDef(uartTxSem);
   uartTxSemHandle = osSemaphoreCreate(osSemaphore(uartTxSem), 1);
 
+  xrce_client_.configure(&huart1, &rosPubMutexHandle, &uartTxSemHandle);
+  spinal_link_xrce_adapter_.init(&xrce_client_, &estimator_, &flight_control_, &battery_status_,
+                             g_uart3_driver == Uart3Driver::CRSF ? &crsf_input_ : nullptr,
+                             &thruster_, &config_flash_database_,
+                             &flightControlMutexHandle);
+
   /* USER CODE BEGIN RTOS_SEMAPHORES */
   /* add semaphores, ... */
   /* USER CODE END RTOS_SEMAPHORES */
@@ -554,17 +404,13 @@ int main(void)
   osThreadDef(coreTask, coreTaskFunc, osPriorityRealtime, 0, 1024);
   coreTaskHandle = osThreadCreate(osThread(coreTask), NULL);
 
-  /* definition and creation of rosSpinTask */
-  osThreadDef(rosSpinTask, rosSpinTaskFunc, osPriorityNormal, 0, 1024);
-  rosSpinTaskHandle = osThreadCreate(osThread(rosSpinTask), NULL);
+  /* Definition and creation of the direct XRCE-DDS communication task. */
+  osThreadDef(communicationTask, communicationTaskFunc, osPriorityNormal, 0, 2048);
+  communicationTaskHandle = osThreadCreate(osThread(communicationTask), NULL);
 
   /* definition and creation of idleTask */
   osThreadDef(idleTask, idleTaskFunc, osPriorityIdle, 0, 128);
   idleTaskHandle = osThreadCreate(osThread(idleTask), NULL);
-
-  /* definition and creation of imuPublishTask */
-  osThreadDef(imuPublishTask, imuPublishTaskFunc, osPriorityNormal, 0, 1024);
-  imuPublishTaskHandle = osThreadCreate(osThread(imuPublishTask), NULL);
 
   /* definition and creation of voltage */
   osThreadDef(voltage, voltageTask, osPriorityNormal, 0, 256);
@@ -1453,23 +1299,21 @@ void coreTaskFunc(void const * argument)
 
   for(;;)
     {
-      if(!ensure_ros_mutex_created()) return;
       osSemaphoreWait(coreTaskSemHandle, osWaitForever);
 
       /* Spine::send(); */
       if (imu_ != nullptr) imu_->update();
-      if (g_boot_config.barometer_enabled != 0U) baro_ros_mod_.update();
-      if (g_uart3_driver == Uart3Driver::GPS) gps_ros_mod_.update();
-      else if (g_uart3_driver == Uart3Driver::CRSF)
+      if (g_boot_config.barometer_enabled != 0U) baro_.update();
+      if (g_uart3_driver == Uart3Driver::GPS) gps_.update();
+      osMutexWait(flightControlMutexHandle, osWaitForever);
+      if (g_uart3_driver == Uart3Driver::CRSF)
         {
-          osMutexWait(flightControlMutexHandle, osWaitForever);
           crsf_input_.update(HAL_GetTick());
-          osMutexRelease(flightControlMutexHandle);
         }
-      estimator_ros_mod_.update();
-      flight_control_ros_mod_.update();
-      thruster_ros_mod_.sendCommand();
-      bootloader_ros_mod_.update();
+      estimator_.update();
+      flight_control_.update();
+      osMutexRelease(flightControlMutexHandle);
+      thruster_.sendCommand();
 
       /* Spine::update(); */
 
@@ -1492,86 +1336,24 @@ void coreTaskFunc(void const * argument)
   /* USER CODE END 5 */
 }
 
-/* USER CODE BEGIN Header_rosSpinTaskFunc */
+/* USER CODE BEGIN Header_communicationTaskFunc */
 /**
-* @brief Function implementing the rosSpinTask thread.
+* @brief Runs the ROS-independent XRCE-DDS client over UART1.
 * @param argument: Not used
 * @retval None
 */
-/* USER CODE END Header_rosSpinTaskFunc */
-void rosSpinTaskFunc(void const * argument)
+/* USER CODE END Header_communicationTaskFunc */
+void communicationTaskFunc(void const * argument)
 {
-  /* USER CODE BEGIN rosSpinTaskFunc */
+  /* USER CODE BEGIN communicationTaskFunc */
   (void)argument;
-
-  uint32_t last_ping = HAL_GetTick();
-  uint8_t session_fail_count = 0;
-
-  microros_init_all();
 
   for (;;)
     {
-      uint32_t now = HAL_GetTick();
-
-      if ((now - last_ping) >= MICROROS_MONITOR_PING_INTERVAL_MS)
-        {
-          osMutexWait(ros_cxt_.ros_mutex, osWaitForever);
-          rmw_ret_t ping_ret = rmw_uros_ping_agent(MICROROS_MONITOR_PING_TIMEOUT_MS,
-                                                   MICROROS_MONITOR_PING_ATTEMPTS);
-          rmw_ret_t session_ret = RMW_RET_OK;
-          if (ping_ret == RMW_RET_OK)
-            {
-              session_ret = rmw_uros_sync_session(MICROROS_MONITOR_SESSION_TIMEOUT_MS);
-            }
-          osMutexRelease(ros_cxt_.ros_mutex);
-
-          if (ping_ret != RMW_RET_OK)
-            {
-              session_fail_count = 0;
-              microros_fini_all();
-              microros_init_all();
-              last_ping = HAL_GetTick();
-              continue;
-            }
-
-          if (session_ret != RMW_RET_OK)
-            {
-              session_fail_count++;
-              if (session_fail_count >= MICROROS_MONITOR_SESSION_FAIL_LIMIT)
-                {
-                  session_fail_count = 0;
-                  microros_fini_all();
-                  microros_init_all();
-                  last_ping = HAL_GetTick();
-                  continue;
-                }
-            }
-          else
-            {
-              session_fail_count = 0;
-            }
-          last_ping = now;
-        }
-
-      if(ros_cxt_.ready.load())
-        {
-          osMutexWait(ros_cxt_.ros_mutex, osWaitForever);
-          rclc_executor_spin_some(&ros_cxt_.executor, RCL_MS_TO_NS(0));
-          if (g_uart3_driver == Uart3Driver::GPS) gps_ros_mod_.publish();
-          else if (g_uart3_driver == Uart3Driver::CRSF) crsf_ros_adapter_.publish();
-          servo_ros_mod_.publish();
-          thruster_ros_mod_.publish();
-          flight_control_ros_mod_.publish();
-          osMutexRelease(ros_cxt_.ros_mutex);
-          osThreadYield();
-        }
-      else
-        {
-          osDelay(1);
-        }
-      /* osDelay(1); */
+      spinal_link_xrce_adapter_.update();
+      osDelay(1);
     }
-  /* USER CODE END rosSpinTaskFunc */
+  /* USER CODE END communicationTaskFunc */
 }
 
 /* USER CODE BEGIN Header_idleTaskFunc */
@@ -1603,29 +1385,7 @@ void imuPublishTaskFunc(void const * argument)
 {
   /* USER CODE BEGIN imuPublishTaskFunc */
   (void)argument;
-
-  for(;;)
-    {
-      if(ros_cxt_.ready.load())
-        {
-          const uint32_t next_publish_delay_ms = estimator_ros_mod_.millisToNextPublish();
-          if (next_publish_delay_ms > 0)
-            {
-              osDelay(next_publish_delay_ms);
-              continue;
-            }
-
-          osMutexWait(ros_cxt_.ros_mutex, osWaitForever);
-          estimator_ros_mod_.publish();
-          osMutexRelease(ros_cxt_.ros_mutex);
-          osThreadYield();
-        }
-      else
-        {
-          osDelay(1);
-        }
-
-  }
+  osThreadTerminate(NULL);
   /* USER CODE END imuPublishTaskFunc */
 }
 
@@ -1644,12 +1404,11 @@ void voltageTask(void const * argument)
   {
     if (g_boot_config.motor_output_driver == MotorOutputDriver::DRIVER_DSHOT)
     {
-      thruster_ros_mod_.updateTelemetry();
-      battery_status_ros_mod_.publish();
+      (void)thruster_.updateTelemetry();
     }
     else
     {
-      battery_status_ros_mod_.update();
+      (void)battery_status_.update();
     }
     osDelay(VOLTAGE_CHECK_INTERVAL);
   }
@@ -1684,14 +1443,14 @@ __weak void canRxTask(void const * argument)
 __weak void ServoTaskCallback(void const * argument)
 {
   /* USER CODE BEGIN ServoTaskCallback */
-  if (!servo_ros_mod_.connected()) {
+  if (!servo_.connected()) {
     osThreadTerminate(NULL);
     return;
   }
   /* Infinite loop */
   for(;;)
   {
-    servo_ros_mod_.update();
+    servo_.update();
     osDelay(1);
   }
   /* USER CODE END ServoTaskCallback */
@@ -1701,7 +1460,7 @@ __weak void ServoTaskCallback(void const * argument)
 void coreTaskEvokeCb(void const * argument)
 {
   /* USER CODE BEGIN coreTaskEvokeCb */
-  if(FlashMemory::isLock()) return; // avoid overflow of ros publish buffer in rosserial UART mode
+  if(FlashMemory::isLock()) return; // Keep flash writes isolated from control and communication work.
   // timer callback to evoke coreTask at 1KHz
   osSemaphoreRelease (coreTaskSemHandle);
   /* USER CODE END coreTaskEvokeCb */

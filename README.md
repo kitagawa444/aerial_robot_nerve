@@ -1,5 +1,13 @@
 # Setup
 
+Spinal Link uses a direct Micro XRCE-DDS Client on Spinal, a standalone Agent
+on aircraft Linux, the ROS-independent GCS Gateway, and the optional ROS 2
+Bridge. See
+[`spinal/COMMUNICATION_ARCHITECTURE.md`](spinal/COMMUNICATION_ARCHITECTURE.md)
+for component boundaries and launch commands. Gazebo CRSF simulation and its
+end-to-end flight test are documented in
+[`spinal/CRSF_SIMULATION.md`](spinal/CRSF_SIMULATION.md).
+
 ## Create ROS2 workspace
 ! NOTE: When building this package while building `aerial_robot_base`, skip creating a new workspace and clone the repo in the existing workspace. 
 ```bash
@@ -20,15 +28,6 @@ EOF
 vcs import src < src/aerial_robot_nerve/spinal.repos
 rosdep install -y -r --from-paths src --ignore-src --rosdistro ${ROS_DISTRO}
 ```
-## Generate micro ROS libraries
-! If you are using a Docker container to run ROS 2, please execute the following outside the container on your local machine, as it itself relies on pulling a Docker image.
-
-The following code requires Docker to be installed on your system.
-```bash
-python3 src/aerial_robot_nerve/spinal/scripts/make_microros_libraries.py --support_rtos
-```
-Then, all files required by micro ROS will be generated and placed in the appropriate directory within the STM32 project.
-
 ## Build and update the STM32 firmware from ROS 2
 
 The `spinal_firmware` package cross-compiles the STM32H743 firmware as part of a
@@ -177,7 +176,7 @@ The updater performs this sequence:
 2. The STM32 latches every motor output at idle and acknowledges the request.
 3. The STM32 changes the volatile CM7 boot-address shadow (`SYSCFG->UR2`) to
    system memory and resets, keeping the board quiescent while it is rewritten.
-4. The updater releases the FT232 from `micro_ros_agent`. For UART it waits for
+4. The updater releases the FT232 from `MicroXRCEAgent`. For UART it waits for
    a successful ROM-loader `GET ID`; for SWD it first restores the volatile boot
    address to `0x08000000`.
 5. It programs and verifies `spinal.bin`, then starts the application and
@@ -192,7 +191,7 @@ When the updater prints
 `waiting for application service /enter_bootloader`, unplug the board's
 microUSB power, wait about one second, and reconnect it.
 
-If exactly one `micro_ros_agent` process owns the serial port, the updater can
+If exactly one `MicroXRCEAgent` process owns the serial port, the updater can
 stop and restart it automatically. For a systemd-managed agent, pass explicit
 commands so systemd does not immediately reclaim the port:
 
@@ -200,8 +199,8 @@ commands so systemd does not immediately reclaim the port:
 ros2 run spinal flash_firmware.py \
   --interface swd \
   --port /dev/serial/by-id/usb-FTDI_FT232R_USB_UART_XXXXXXXX-if00-port0 \
-  --agent-stop-command "sudo systemctl stop micro-ros-agent" \
-  --agent-start-command "sudo systemctl start micro-ros-agent"
+  --agent-stop-command "sudo systemctl stop micro-xrce-agent" \
+  --agent-start-command "sudo systemctl start micro-xrce-agent"
 ```
 
 For an explicit UART experiment on a board already in system memory, use:
@@ -285,7 +284,8 @@ The following root topics are published and also relayed by
 /rc/link_quality  std_msgs/msg/UInt8   # uplink link quality, 0..100
 ```
 
-After building, flashing, and starting the micro-ROS agent, verify reception
+After building, flashing, and starting `MicroXRCEAgent` with the optional ROS
+2 adapter, verify reception
 before connecting the values to flight control:
 
 ```bash
@@ -410,9 +410,8 @@ rc_serial_baud: 420000
 
 An empty `rc_serial_port` (the default) disables the simulation serial input.
 
-## Generate & Build micro ROS agent
+## Build the standalone Micro XRCE-DDS Agent
 ```bash
-source install/setup.bash  # setup.zsh if using zsh
-ros2 run micro_ros_setup create_agent_ws.sh
-ros2 run micro_ros_setup build_agent.sh
+src/aerial_robot_nerve/spinal/scripts/build_micro_xrce_agent.sh
+export PATH="$HOME/.local/share/aerial_robot/micro_xrce_agent/bin:$PATH"
 ```

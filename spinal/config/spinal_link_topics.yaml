@@ -1,0 +1,327 @@
+version: 1
+
+# This file is the single source of truth for the DDS entities created on the
+# STM32 and Linux sides of Spinal Link. Run scripts/generate_spinal_link_topics.py
+# after changing it. Set enabled to false to remove a topic from both endpoints.
+topics:
+  - message: HEARTBEAT
+    id: 1
+    topic: aerial/spinal_link/heartbeat
+    direction: spinal_to_host
+    enabled: true
+    reliability: best_effort
+    durability: volatile
+    history_depth: 1
+    application_ack: false
+    deduplicate: false
+
+  - message: IMU
+    id: 2
+    topic: aerial/spinal_link/imu
+    direction: spinal_to_host
+    enabled: true
+    reliability: best_effort
+    durability: volatile
+    history_depth: 1
+    application_ack: false
+    deduplicate: false
+
+  - message: STATE_ESTIMATE
+    id: 3
+    topic: aerial/spinal_link/state_estimate
+    direction: spinal_to_host
+    enabled: true
+    reliability: best_effort
+    durability: volatile
+    history_depth: 1
+    application_ack: false
+    deduplicate: false
+
+  - message: FLIGHT_STATUS
+    id: 4
+    topic: aerial/spinal_link/flight_status
+    direction: spinal_to_host
+    enabled: true
+    reliability: reliable
+    durability: volatile
+    history_depth: 5
+    application_ack: false
+    deduplicate: false
+
+  - message: BATTERY_STATUS
+    id: 5
+    topic: aerial/spinal_link/battery_status
+    direction: spinal_to_host
+    enabled: true
+    reliability: best_effort
+    durability: volatile
+    history_depth: 1
+    application_ack: false
+    deduplicate: false
+
+  - message: RC_STATUS
+    id: 6
+    topic: aerial/spinal_link/rc_status
+    direction: spinal_to_host
+    enabled: true
+    reliability: best_effort
+    durability: volatile
+    history_depth: 1
+    application_ack: false
+    deduplicate: false
+
+  - message: RC_CHANNELS
+    id: 7
+    topic: aerial/spinal_link/rc_channels
+    direction: spinal_to_host
+    enabled: true
+    reliability: best_effort
+    durability: volatile
+    history_depth: 1
+    application_ack: false
+    deduplicate: false
+
+  - message: MOTOR_OUTPUTS
+    id: 8
+    topic: aerial/spinal_link/motor_outputs
+    direction: spinal_to_host
+    enabled: false
+    reliability: best_effort
+    durability: volatile
+    history_depth: 1
+    application_ack: false
+    deduplicate: false
+
+  - message: EVENT
+    id: 9
+    topic: aerial/spinal_link/event
+    direction: spinal_to_host
+    enabled: false
+    reliability: reliable
+    durability: volatile
+    history_depth: 10
+    application_ack: false
+    deduplicate: false
+
+  - message: APPLICATION_CAPABILITIES
+    id: 10
+    topic: aerial/spinal_link/application_capabilities
+    direction: spinal_to_host
+    enabled: true
+    reliability: reliable
+    durability: transient_local
+    history_depth: 1
+    application_ack: false
+    deduplicate: false
+
+  - message: CONFIG_FLASH_STATUS
+    id: 11
+    topic: aerial/spinal_link/config_flash_status
+    direction: spinal_to_host
+    enabled: true
+    reliability: reliable
+    durability: volatile
+    history_depth: 5
+    application_ack: false
+    deduplicate: false
+
+  - message: FLIGHT_PARAMETER_STATUS
+    id: 12
+    topic: aerial/spinal_link/flight_parameter_status
+    direction: spinal_to_host
+    enabled: true
+    reliability: reliable
+    durability: volatile
+    history_depth: 5
+    application_ack: false
+    deduplicate: false
+
+  - message: FLIGHT_PARAMETER_CHUNK
+    id: 13
+    topic: aerial/spinal_link/flight_parameter_chunk
+    direction: spinal_to_host
+    enabled: true
+    reliability: reliable
+    durability: volatile
+    history_depth: 10
+    application_ack: false
+    deduplicate: false
+
+  - message: REBOOT_STATUS
+    id: 14
+    topic: aerial/spinal_link/reboot_status
+    direction: spinal_to_host
+    enabled: true
+    reliability: reliable
+    durability: volatile
+    history_depth: 5
+    application_ack: false
+    deduplicate: false
+
+  - message: CONFIG_ACK
+    id: 15
+    topic: aerial/spinal_link/config_ack
+    direction: spinal_to_host
+    enabled: true
+    reliability: reliable
+    durability: volatile
+    history_depth: 5
+    application_ack: false
+    deduplicate: false
+
+  - message: BOOTLOADER_STATUS
+    id: 16
+    topic: aerial/spinal_link/bootloader_status
+    direction: spinal_to_host
+    enabled: true
+    reliability: reliable
+    durability: volatile
+    history_depth: 5
+    application_ack: false
+    deduplicate: false
+
+  - message: PROTOCOL_ACK
+    id: 17
+    topic: aerial/spinal_link/protocol_ack
+    direction: spinal_to_host
+    enabled: true
+    reliability: reliable
+    durability: volatile
+    history_depth: 10
+    application_ack: false
+    deduplicate: false
+
+  - message: NETWORK_HEARTBEAT
+    id: 100
+    topic: aerial/spinal_link/network_heartbeat
+    direction: host_to_spinal
+    enabled: true
+    reliability: best_effort
+    durability: volatile
+    history_depth: 1
+    application_ack: false
+    deduplicate: false
+
+  - message: FLIGHT_COMMAND
+    id: 101
+    topic: aerial/spinal_link/flight_command
+    direction: host_to_spinal
+    enabled: true
+    reliability: reliable
+    durability: volatile
+    history_depth: 5
+    application_ack: true
+    deduplicate: true
+    ack_timeout_ms: 100
+    max_retries: 3
+
+  - message: EXTERNAL_STATE_MEASUREMENT
+    id: 102
+    topic: aerial/spinal_link/external_state_measurement
+    direction: host_to_spinal
+    enabled: true
+    reliability: best_effort
+    durability: volatile
+    history_depth: 1
+    application_ack: false
+    deduplicate: false
+
+  - message: POSITION_CONTROL_SETPOINT
+    id: 103
+    topic: aerial/spinal_link/position_control_setpoint
+    direction: host_to_spinal
+    enabled: true
+    reliability: best_effort
+    durability: volatile
+    history_depth: 1
+    application_ack: false
+    deduplicate: false
+
+  - message: HEALTH_CONFIG
+    id: 104
+    topic: aerial/spinal_link/health_config
+    direction: host_to_spinal
+    enabled: true
+    reliability: reliable
+    durability: volatile
+    history_depth: 5
+    application_ack: true
+    deduplicate: true
+    ack_timeout_ms: 200
+    max_retries: 3
+
+  - message: PARAMETER_REQUEST
+    id: 105
+    topic: aerial/spinal_link/parameter_request
+    direction: host_to_spinal
+    enabled: true
+    reliability: reliable
+    durability: volatile
+    history_depth: 5
+    application_ack: true
+    deduplicate: true
+    ack_timeout_ms: 500
+    max_retries: 3
+
+  - message: CONFIG_FLASH_REQUEST
+    id: 106
+    topic: aerial/spinal_link/config_flash_request
+    direction: host_to_spinal
+    enabled: true
+    reliability: reliable
+    durability: volatile
+    history_depth: 5
+    application_ack: true
+    deduplicate: true
+    ack_timeout_ms: 500
+    max_retries: 3
+
+  - message: REBOOT_REQUEST
+    id: 107
+    topic: aerial/spinal_link/reboot_request
+    direction: host_to_spinal
+    enabled: true
+    reliability: reliable
+    durability: volatile
+    history_depth: 5
+    application_ack: true
+    deduplicate: true
+    ack_timeout_ms: 200
+    max_retries: 3
+
+  - message: ROS_HEARTBEAT
+    id: 108
+    topic: aerial/spinal_link/ros_heartbeat
+    direction: host_to_spinal
+    enabled: true
+    reliability: best_effort
+    durability: volatile
+    history_depth: 1
+    application_ack: false
+    deduplicate: false
+
+  - message: CONFIGURATION_CHUNK
+    id: 109
+    topic: aerial/spinal_link/configuration_chunk
+    direction: host_to_spinal
+    enabled: true
+    reliability: reliable
+    durability: volatile
+    history_depth: 10
+    application_ack: true
+    deduplicate: true
+    ack_timeout_ms: 200
+    max_retries: 5
+
+  - message: BOOTLOADER_REQUEST
+    id: 110
+    topic: aerial/spinal_link/bootloader_request
+    direction: host_to_spinal
+    enabled: true
+    reliability: reliable
+    durability: volatile
+    history_depth: 5
+    application_ack: true
+    deduplicate: true
+    ack_timeout_ms: 200
+    max_retries: 3
