@@ -1,6 +1,24 @@
 cmake_minimum_required(VERSION 3.5)
 project(spinal)
 
+find_package(Python3 REQUIRED COMPONENTS Interpreter)
+
+set(SPINAL_LINK_TOPIC_CONFIG
+  ${CMAKE_CURRENT_SOURCE_DIR}/config/spinal_link_topics.yaml)
+set(SPINAL_LINK_TOPIC_HEADER
+  ${CMAKE_CURRENT_SOURCE_DIR}/mcu_project/lib/My_Lib/communication/spinal_link_topics.generated.h)
+add_custom_target(spinal_link_topic_config_check ALL
+  COMMAND ${Python3_EXECUTABLE}
+    ${CMAKE_CURRENT_SOURCE_DIR}/scripts/generate_spinal_link_topics.py
+    --config ${SPINAL_LINK_TOPIC_CONFIG}
+    --output ${SPINAL_LINK_TOPIC_HEADER}
+    --check
+  DEPENDS
+    ${SPINAL_LINK_TOPIC_CONFIG}
+    ${SPINAL_LINK_TOPIC_HEADER}
+    ${CMAKE_CURRENT_SOURCE_DIR}/scripts/generate_spinal_link_topics.py
+  COMMENT "Checking generated Spinal Link DDS topic configuration")
+
 if(CMAKE_COMPILER_IS_GNUCXX OR CMAKE_CXX_COMPILER_ID MATCHES "Clang")
   add_compile_options(-Wall -Wextra -Wpedantic)
 endif()
@@ -15,6 +33,18 @@ find_package(spinal_msgs REQUIRED)
 find_package(sensor_msgs REQUIRED)
 find_package(std_msgs REQUIRED)
 find_package(std_srvs REQUIRED)
+find_package(diagnostic_msgs REQUIRED)
+find_package(fastrtps REQUIRED)
+
+include(FetchContent)
+FetchContent_Declare(
+  mavlink_headers
+  URL https://github.com/mavlink/c_library_v2/archive/663f9109025433f241ee9fef60e0dbbec64a6cea.tar.gz
+)
+FetchContent_GetProperties(mavlink_headers)
+if(NOT mavlink_headers_POPULATED)
+  FetchContent_Populate(mavlink_headers)
+endif()
 
 set(SPINAL_DIRS ${CMAKE_CURRENT_SOURCE_DIR}/mcu_project/lib/My_Lib)
 
@@ -79,6 +109,7 @@ target_link_libraries(spinal_flight_control
 
 ament_target_dependencies(spinal_flight_control
   PUBLIC
+  diagnostic_msgs
   rclcpp
   rclcpp_lifecycle
   sensor_msgs
@@ -108,14 +139,53 @@ add_executable(spinal_namespace_bridge
   src/spinal_namespace_bridge.cpp
 )
 
+# ROS-independent DDS transport shared by the vehicle gateway and the optional
+# ROS 2 adapter. This binary layer can run on an aircraft Linux image without a
+# ROS graph; ament is only used to install it with the rest of this repository.
+add_library(spinal_dds_transport
+  src/spinal_link/communication_monitor.cpp
+  src/spinal_link/spinal_dds_endpoint.cpp
+)
+add_dependencies(spinal_dds_transport spinal_link_topic_config_check)
+target_compile_features(spinal_dds_transport PUBLIC cxx_std_17)
+target_include_directories(spinal_dds_transport
+  PUBLIC
+  $<BUILD_INTERFACE:${CMAKE_CURRENT_SOURCE_DIR}/src/spinal_link>
+  $<BUILD_INTERFACE:${SPINAL_DIRS}>
+  $<INSTALL_INTERFACE:include/spinal_link>
+  $<INSTALL_INTERFACE:include/My_Lib>
+)
+target_link_libraries(spinal_dds_transport PUBLIC fastrtps)
+
+add_executable(gcs_gateway
+  src/spinal_link/mavlink_udp_gateway.cpp
+  src/spinal_link/gcs_gateway_main.cpp
+)
+target_compile_features(gcs_gateway PRIVATE cxx_std_17)
+target_include_directories(gcs_gateway SYSTEM PRIVATE ${mavlink_headers_SOURCE_DIR})
+target_link_libraries(gcs_gateway PRIVATE spinal_dds_transport)
+
+add_executable(spinal_ros2_bridge
+  src/spinal_link/spinal_ros2_bridge.cpp
+)
+target_compile_features(spinal_ros2_bridge PRIVATE cxx_std_17)
+target_link_libraries(spinal_ros2_bridge spinal_dds_transport spinal_flight_control)
+ament_target_dependencies(spinal_ros2_bridge
+  diagnostic_msgs
+  rclcpp
+  spinal_msgs
+  std_msgs
+  std_srvs
+)
+
 ament_target_dependencies(spinal_namespace_bridge
   rclcpp
 )
 
-ament_export_dependencies(rclcpp rclcpp_lifecycle spinal_msgs sensor_msgs std_msgs std_srvs)
+ament_export_dependencies(diagnostic_msgs fastrtps rclcpp rclcpp_lifecycle spinal_msgs sensor_msgs std_msgs std_srvs)
 
 install(
-  TARGETS spinal_state_estimation spinal_math spinal_flight_control
+  TARGETS spinal_state_estimation spinal_math spinal_flight_control spinal_dds_transport
   EXPORT export_${PROJECT_NAME}
   ARCHIVE DESTINATION lib
   LIBRARY DESTINATION lib
@@ -123,13 +193,19 @@ install(
 )
 
 install(
-  TARGETS spinal_namespace_bridge
+  TARGETS spinal_namespace_bridge gcs_gateway spinal_ros2_bridge
   RUNTIME DESTINATION lib/${PROJECT_NAME}
 )
 
 install(
   DIRECTORY ${SPINAL_DIRS}/
   DESTINATION include/My_Lib
+  FILES_MATCHING PATTERN "*.h"
+)
+
+install(
+  DIRECTORY src/spinal_link/
+  DESTINATION include/spinal_link
   FILES_MATCHING PATTERN "*.h"
 )
 
@@ -143,6 +219,16 @@ install(FILES
 install(
   DIRECTORY launch
   DESTINATION share/${PROJECT_NAME}
+)
+
+install(
+  DIRECTORY config
+  DESTINATION share/${PROJECT_NAME}
+)
+
+install(
+  PROGRAMS scripts/generate_spinal_link_topics.py
+  DESTINATION lib/${PROJECT_NAME}
 )
 
 install(DIRECTORY
@@ -200,13 +286,33 @@ if(BUILD_TESTING)
     test/config_flash_database_test.cpp
   )
   target_link_libraries(config_flash_database_test spinal_flight_control)
+  ament_add_gtest(spinal_link_protocol_test
+    test/spinal_link_protocol_test.cpp
+  )
+  target_include_directories(spinal_link_protocol_test PRIVATE ${SPINAL_DIRS})
+  ament_add_gtest(spinal_dds_endpoint_test
+    test/spinal_dds_endpoint_test.cpp
+  )
+  target_link_libraries(spinal_dds_endpoint_test spinal_dds_transport)
+  ament_add_pytest_test(crsf_simulator_test
+    test/test_crsf_simulator.py
+  )
 endif()
 
 install(PROGRAMS
   scripts/topic_hz_checker.py
   scripts/flash_firmware.py
+  scripts/build_micro_xrce_agent.sh
+  scripts/crsf_simulator.py
+  scripts/crsf_gazebo_test.py
   DESTINATION lib/${PROJECT_NAME}
   )
+
+install(FILES
+  COMMUNICATION_ARCHITECTURE.md
+  CRSF_SIMULATION.md
+  DESTINATION share/${PROJECT_NAME}
+)
 
 ament_export_targets(export_${PROJECT_NAME} HAS_LIBRARY_TARGET)
 ament_export_include_directories(include include/My_Lib)
