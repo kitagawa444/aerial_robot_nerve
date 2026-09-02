@@ -237,7 +237,7 @@ void FlightSupervisor::reportControllerForceLand(
   updateHealth_(input);
 }
 
-void FlightSupervisor::noteExternalSetpoint() {
+void FlightSupervisor::noteExternalSetpoint(uint8_t source) {
   if (status_.arming_state != FlightArmingState::ARMED ||
       status_.flight_phase != FlightPhase::AIRBORNE ||
       status_.control_mode != FlightControlMode::POSITION ||
@@ -245,8 +245,8 @@ void FlightSupervisor::noteExternalSetpoint() {
       status_.authority == FlightCommandSource::RC) {
     return;
   }
-  if (status_.authority != FlightCommandSource::ROS) {
-    status_.authority = FlightCommandSource::ROS;
+  if (status_.authority != source) {
+    status_.authority = source;
     ++status_.sequence;
   }
 }

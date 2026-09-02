@@ -12,7 +12,8 @@ enum : uint8_t
   ROS = 1,
   RC = 2,
   INTERNAL = 3,
-  FAILSAFE = 4
+  FAILSAFE = 4,
+  MAVLINK = 5
 };
 }
 
@@ -184,7 +185,7 @@ public:
   bool request(uint8_t command, uint8_t source, const FlightSupervisorInput &input);
   void update(const FlightSupervisorInput &input);
   void reportControllerForceLand(const FlightSupervisorInput &input);
-  void noteExternalSetpoint();
+  void noteExternalSetpoint(uint8_t source = FlightCommandSource::ROS);
 
   const FlightSupervisorConfig &config() const { return config_; }
   const FlightSupervisorStatus &status() const { return status_; }

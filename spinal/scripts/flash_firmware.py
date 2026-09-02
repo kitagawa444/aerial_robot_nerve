@@ -56,7 +56,7 @@ def parse_args() -> argparse.Namespace:
         "--port",
         default="/dev/ttyUSB0",
         help=(
-            "FT232 device used by the micro-ROS agent and UART programmer; "
+            "FT232 device used by MicroXRCEAgent and the UART programmer; "
             "/dev/serial/by-id/... is recommended"
         ),
     )
@@ -102,16 +102,16 @@ def parse_args() -> argparse.Namespace:
     )
     parser.add_argument(
         "--agent-stop-command",
-        help='Command used to release the serial port, e.g. "systemctl stop micro-ros-agent"',
+        help='Command used to release the serial port, e.g. "systemctl stop micro-xrce-agent"',
     )
     parser.add_argument(
         "--agent-start-command",
-        help='Command used after a successful flash, e.g. "systemctl start micro-ros-agent"',
+        help='Command used after a successful flash, e.g. "systemctl start micro-xrce-agent"',
     )
     parser.add_argument(
         "--no-restart-agent",
         action="store_true",
-        help="Do not restart a stopped micro-ROS agent after flashing",
+        help="Do not restart a stopped XRCE-DDS agent after flashing",
     )
     return parser.parse_args()
 
@@ -291,15 +291,19 @@ def port_users(port: Path) -> List[ProcessRecord]:
     return users
 
 
-def is_micro_ros_agent(process: ProcessRecord) -> bool:
-    return any("micro_ros_agent" in argument for argument in process.argv)
+def is_xrce_agent(process: ProcessRecord) -> bool:
+    return any(
+        "microxrceagent" in argument.lower()
+        or "micro_ros_agent" in argument.lower()
+        for argument in process.argv
+    )
 
 
 def find_auto_managed_agent(port: Path) -> Optional[ProcessRecord]:
     users = port_users(port)
     if not users:
         return None
-    if len(users) != 1 or not is_micro_ros_agent(users[0]):
+    if len(users) != 1 or not is_xrce_agent(users[0]):
         summary = ", ".join(
             f"pid={process.pid} ({Path(process.argv[0]).name})" for process in users
         )
@@ -310,7 +314,7 @@ def find_auto_managed_agent(port: Path) -> Optional[ProcessRecord]:
         os.kill(users[0].pid, 0)
     except PermissionError as exc:
         raise FirmwareUpdateError(
-            "micro-ROS agent is owned by another user; use explicit privileged "
+            "XRCE-DDS agent is owned by another user; use explicit privileged "
             "--agent-stop-command and --agent-start-command options"
         ) from exc
     except ProcessLookupError:
@@ -366,9 +370,9 @@ def wait_for_process_exit(pid: int, timeout: float) -> bool:
 
 
 def stop_auto_managed_agent(agent: ProcessRecord) -> None:
-    print(f"[flash] stopping micro-ROS agent pid={agent.pid}")
+    print(f"[flash] stopping XRCE-DDS agent pid={agent.pid}")
     try:
-        # A background micro_ros_agent commonly inherits SIGINT as ignored from
+        # A background XRCE-DDS agent can inherit SIGINT as ignored from
         # its non-interactive shell.  Waiting for SIGINT here also lets it keep
         # transmitting while the MCU resets, which can corrupt the ROM
         # bootloader's UART auto-baud handshake.  SIGTERM releases the port
@@ -385,7 +389,7 @@ def stop_auto_managed_agent(agent: ProcessRecord) -> None:
     except ProcessLookupError:
         return
     if not wait_for_process_exit(agent.pid, 0.5):
-        raise FirmwareUpdateError(f"micro-ROS agent pid={agent.pid} did not stop")
+        raise FirmwareUpdateError(f"XRCE-DDS agent pid={agent.pid} did not stop")
 
 
 def ensure_port_released(port: Path, timeout: float = 5.0) -> None:
@@ -401,7 +405,7 @@ def ensure_port_released(port: Path, timeout: float = 5.0) -> None:
 
 
 def restart_auto_managed_agent(agent: ProcessRecord) -> None:
-    print(f"[flash] restarting micro-ROS agent: {shlex.join(agent.argv)}")
+    print(f"[flash] restarting XRCE-DDS agent: {shlex.join(agent.argv)}")
     subprocess.Popen(
         agent.argv,
         cwd=agent.cwd,

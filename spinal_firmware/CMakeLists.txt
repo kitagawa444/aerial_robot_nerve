@@ -69,9 +69,9 @@ file(GLOB_RECURSE FIRMWARE_INPUTS CONFIGURE_DEPENDS
   "${CMAKE_CURRENT_SOURCE_DIR}/../spinal/mcu_project/lib/My_Lib/*.cpp"
   "${CMAKE_CURRENT_SOURCE_DIR}/../spinal/mcu_project/lib/My_Lib/*.h"
   "${CMAKE_CURRENT_SOURCE_DIR}/../spinal/mcu_project/lib/My_Lib/*.hpp"
-  "${CMAKE_CURRENT_SOURCE_DIR}/../spinal/mcu_project/lib/microros/*.cpp"
-  "${CMAKE_CURRENT_SOURCE_DIR}/../spinal/mcu_project/lib/microros/*.h"
-  "${CMAKE_CURRENT_SOURCE_DIR}/../spinal/mcu_project/lib/microros/*.a"
+  "${CMAKE_CURRENT_SOURCE_DIR}/../spinal/src/xrce_dds/*.cpp"
+  "${CMAKE_CURRENT_SOURCE_DIR}/../spinal/src/xrce_dds/*.h"
+  "${CMAKE_CURRENT_SOURCE_DIR}/../spinal/src/xrce_dds/*.idl"
   "${CMAKE_CURRENT_SOURCE_DIR}/../spinal/mcu_project/boards/stm32H7_v2/*.c"
   "${CMAKE_CURRENT_SOURCE_DIR}/../spinal/mcu_project/boards/stm32H7_v2/*.h"
   "${CMAKE_CURRENT_SOURCE_DIR}/../spinal/mcu_project/boards/stm32H7_v2/*.hpp"
@@ -97,7 +97,7 @@ add_custom_target(stm32_firmware ALL
   DEPENDS "${FIRMWARE_ELF}" "${FIRMWARE_BIN}" "${FIRMWARE_HEX}")
 
 set(STM32_FLASH_PORT "/dev/ttyUSB0" CACHE STRING
-  "FT232 serial device used by micro-ROS and the STM32 ROM bootloader")
+  "FT232 serial device used by XRCE-DDS and the STM32 ROM bootloader")
 set(STM32_FLASH_BAUD "115200" CACHE STRING
   "UART baud rate used by the STM32 ROM bootloader")
 set(STM32_FLASH_BACKEND "auto" CACHE STRING

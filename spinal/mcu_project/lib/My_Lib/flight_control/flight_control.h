@@ -40,7 +40,8 @@ public:
   bool applyFourAxisCommand(const FlightControlFourAxisCommand &cmd);
   bool applyPositionControlConfig(const PositionControlConfig &config);
   bool applyHealthConfig(const HealthManagerConfig &config);
-  bool applyPositionControlSetpoint(const PositionControlSetpoint &setpoint);
+  bool applyPositionControlSetpoint(const PositionControlSetpoint &setpoint,
+                                    uint8_t source = FlightCommandSource::ROS);
   void applyPositionControlRcInput(const PositionControlRcInput &input);
   void setRosLinkState(uint8_t state);
   void noteNetworkHeartbeat();

@@ -272,15 +272,22 @@ void fillFlightStatus(FlightStatusMsg &msg, const FlightSupervisorStatus &src)
 void fillFlightParameterTable(FlightParameterTableMsg &msg, const FlightParameterDatabase &database, bool applied,
                               bool persistent_storage)
 {
-  const FlightParameterPayload &src = database.payload();
-  msg.valid = database.valid();
-  msg.dirty = database.dirty();
+  fillFlightParameterTable(msg, database.payload(), database.valid(), database.dirty(), applied, persistent_storage,
+                           database.schemaVersion(), database.generation(), database.crc32(), database.validFields());
+}
+
+void fillFlightParameterTable(FlightParameterTableMsg &msg, const FlightParameterPayload &src, bool valid, bool dirty,
+                              bool applied, bool persistent_storage, uint16_t schema_version, uint32_t generation,
+                              uint32_t crc32, uint32_t valid_fields)
+{
+  msg.valid = valid;
+  msg.dirty = dirty;
   msg.applied = applied;
   msg.persistent_storage = persistent_storage;
-  msg.schema_version = database.schemaVersion();
-  msg.generation = database.generation();
-  msg.crc32 = database.crc32();
-  msg.valid_fields = database.validFields();
+  msg.schema_version = schema_version;
+  msg.generation = generation;
+  msg.crc32 = crc32;
+  msg.valid_fields = valid_fields;
   msg.motor_count = src.motor_count;
   msg.uav_model = src.uav_model;
   msg.gimbal_dof = src.gimbal_dof;

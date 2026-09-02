@@ -74,5 +74,8 @@ void fillRollPitchYawTerm(RollPitchYawTermMsg &msg, const FlightControlRpyTerm &
 void fillFlightStatus(FlightStatusMsg &msg, const FlightSupervisorStatus &src);
 void fillFlightParameterTable(FlightParameterTableMsg &msg, const FlightParameterDatabase &database, bool applied,
                               bool persistent_storage);
+void fillFlightParameterTable(FlightParameterTableMsg &msg, const FlightParameterPayload &payload, bool valid,
+                              bool dirty, bool applied, bool persistent_storage, uint16_t schema_version,
+                              uint32_t generation, uint32_t crc32, uint32_t valid_fields);
 
 }  // namespace flight_control_ros

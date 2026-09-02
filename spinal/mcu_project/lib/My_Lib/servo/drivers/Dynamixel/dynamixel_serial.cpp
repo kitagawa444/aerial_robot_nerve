@@ -1141,7 +1141,7 @@ void DynamixelSerial::cmdSyncWriteTorqueEnable()
 
 void DynamixelSerial::setStatusReturnLevel()
 {
-	cmdWriteStatusReturnLevel(DX_BROADCAST_ID, READ);
+	cmdWriteStatusReturnLevel(DX_BROADCAST_ID, DX_RETURN_READ);
 }
 
 void DynamixelSerial::getHomingOffset()

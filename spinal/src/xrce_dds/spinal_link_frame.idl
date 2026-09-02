@@ -1,0 +1,17 @@
+module aerial
+{
+  module spinal_link
+  {
+    struct SpinalLinkFrame
+    {
+      unsigned short protocol_version;
+      unsigned short message_id;
+      unsigned long sequence;
+      unsigned long request_id;
+      unsigned long long timestamp_us;
+      octet source;
+      octet reliability;
+      sequence<octet, 512> payload;
+    };
+  };
+};
